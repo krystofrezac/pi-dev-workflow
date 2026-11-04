@@ -11,5 +11,5 @@
 		"skipLibCheck": true,
 		"types": ["node"]
 	},
-	"include": ["*.ts", "e2e/*.ts"]
+	"include": ["*.ts", "prompts/*.ts", "e2e/*.ts"]
 }
