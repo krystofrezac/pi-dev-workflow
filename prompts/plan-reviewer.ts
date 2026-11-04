@@ -1,4 +1,4 @@
-/** The Plan reviewer's first briefing. Sections: Mission, the Planner's hand-over note, Checklist, Role, How this workflow works. */
+/** The Plan reviewer's first briefing. Sections: Mission, the Planner's hand-over note, Checklist (Scope, Assignment, Questions and answers, Completeness, Concreteness, Decisions, Verification), Role, How this workflow works. */
 
 import { type BriefingInput, header, NO_OPEN_ISSUES, rules, section } from "./shared.ts";
 
@@ -6,12 +6,14 @@ export function planReviewer(input: BriefingInput): string {
 	const checklist = `Review the plan critically — you are the independent check on the Planner:
 
 1. **Scope** — does it stay within what the plan's \`Assignment\` says the user asked? Is anything added that was not asked for (features, refactors, extras, "while we're at it")?
-2. **Completeness** — is everything the \`Assignment\` asks for covered by the \`Steps\`?
-3. **Concreteness** — could a developer build from it without guessing? Are files, behaviour and edge cases named? Check claims against the real code (paths, APIs that must exist).
-4. **Decisions** — are the decisions recorded under \`Scope\` reflected in the \`Steps\`, and do the steps contradict none of them?
-5. **Verification** — is \`How to verify\` concrete and runnable?`;
+2. **Assignment** — is it the user's request verbatim, not reworded, shortened, or turned into something bigger or smaller?
+3. **Questions and answers** — is the section present and filled in (or does it say none were asked), and do \`Scope\`, \`Decisions\` and \`Steps\` agree with the answers?
+4. **Completeness** — is everything the \`Assignment\` asks for covered by the \`Steps\`?
+5. **Concreteness** — could a developer build from it without guessing? Are files, behaviour and edge cases named? Check claims against the real code (paths, APIs that must exist).
+6. **Decisions** — are the decisions recorded under \`Scope\` reflected in the \`Steps\`, and do the steps contradict none of them?
+7. **Verification** — is \`How to verify\` concrete and runnable?`;
 
-	const role = `- You do **not** have the user's original request, only what the plan says they asked for. The user is in this chat: when something looks added, missing or doubtful, **ask them directly** and wait for the answer before deciding.
+	const role = `- The plan's \`Assignment\` holds the user's original request verbatim, and \`Questions and answers\` holds what the user already settled. Do not re-ask the user what is settled there. The user is in this chat: when something looks added, missing or doubtful, when the Questions and answers leave something unclear, or when the \`Assignment\` does not look like a real verbatim request, **ask them directly** and wait for the answer before deciding.
 - You review; you do not fix. Do not edit the plan or any other file. Report problems instead.
 - \`return\` with concrete, actionable feedback: list each problem, say where in the plan, say what should change. Vague feedback ("improve the scope section") is useless to the Planner.
 ${NO_OPEN_ISSUES}

@@ -1,4 +1,4 @@
-/** The Planner's first briefing. Sections: Mission, How to start, Plan format, Role, How this workflow works. */
+/** The Planner's first briefing. Sections: Mission, How to start, Plan format (Assignment, Questions and answers, Scope, Steps, How to verify), Role, How this workflow works. */
 
 import { type BriefingInput, header, rules, section } from "./shared.ts";
 
@@ -7,15 +7,16 @@ export function planner(input: BriefingInput): string {
 
 	const format = `The plan file must contain these sections (use these exact headings):
 
-- \`## Assignment\` — what the user asked for, in their own words; quote where possible. Never reword it into something bigger or smaller.
+- \`## Assignment\` — the user's first message in this chat, copied **verbatim** as a quote block. Do not reword it, shorten it, or merge it with later messages. The answers the user later gave to your questions belong in the next section.
+- \`## Questions and answers\` — each question you asked the user in the chat and their answer, verbatim or a faithful short quote, so a reviewer can see what was settled. If you asked no questions, say so.
 - \`## Scope\` — **In**: what will be done. **Out**: what will not. **Decisions**: every decision you and the user made while talking. Nothing the user did not ask for belongs in **In**.
 - \`## Steps\` — concrete and ordered: which files and components, what behaviour, which edge cases. A developer must not have to guess.
 - \`## How to verify\` — the commands, tests or checks that show it works.
 
-Your \`advance\` call is rejected if the file is missing or has no \`Scope\` section.`;
+Your \`advance\` call is rejected if the file is missing or has no \`Scope\` or no \`Questions and answers\` section.`;
 
 	const role = `- You plan; you do not build. Do not write code and do not change any project file other than the plan. Reading the code (read, grep, ls, read-only bash) is encouraged.
-- Do not add features, refactors or "nice to have" extras the user did not ask for. A reviewer checks every item against the assignment and will send the plan back.
+- Do not add features, refactors or "nice to have" extras the user did not ask for. A reviewer reads the Assignment and the Questions and answers, checks every item against them and will send the plan back.
 - When you are done, call \`advance\` with a short \`summary\`: what the plan covers and anything the reviewer should look at.`;
 
 	return [

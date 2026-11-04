@@ -23,7 +23,7 @@ test("allocateRunDir: 0001 first, then the next free number; other folders are i
 	}
 });
 
-test("planProblem: missing file, missing Scope section, fine", () => {
+test("planProblem: missing file, missing Scope or Questions and answers section, fine", () => {
 	const cwd = tmp();
 	try {
 		const { dir } = allocateRunDir(cwd);
@@ -33,9 +33,25 @@ test("planProblem: missing file, missing Scope section, fine", () => {
 		writeFileSync(planPath(dir), "# Plan\n\nThe scope is large.\n");
 		assert.match(planProblem(dir) ?? "", /no "Scope" section/); // prose is not a heading
 		writeFileSync(planPath(dir), "# Plan\n\n## Assignment\nx\n\n## Scope\n- in: x\n");
+		assert.match(planProblem(dir) ?? "", /no "Questions and answers" section/);
+		writeFileSync(planPath(dir), "# Plan\n\n## Assignment\nx\n\n## Questions and answers\nnone asked\n\n## Scope\n- in: x\n");
 		assert.equal(planProblem(dir), undefined);
-		writeFileSync(planPath(dir), "# Plan\n\n### scope & decisions\n");
+		writeFileSync(planPath(dir), "# Plan\n\n### scope & decisions\n\n### questions and answers\n");
 		assert.equal(planProblem(dir), undefined);
+	} finally {
+		rmSync(cwd, { recursive: true, force: true });
+	}
+});
+
+test("planProblem: prose or a quote does not satisfy the Questions and answers gate", () => {
+	const cwd = tmp();
+	try {
+		const { dir } = allocateRunDir(cwd);
+		writeFileSync(
+			planPath(dir),
+			"# Plan\n\n## Assignment\n> Questions and answers should be documented\n\nThe questions and answers are below.\n\n## Scope\n- in: x\n",
+		);
+		assert.match(planProblem(dir) ?? "", /no "Questions and answers" section/);
 	} finally {
 		rmSync(cwd, { recursive: true, force: true });
 	}

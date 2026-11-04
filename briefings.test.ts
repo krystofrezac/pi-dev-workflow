@@ -41,17 +41,20 @@ test("Planner, first round: starts from the user's first message, no greeting; m
 	assert.match(text, /How to start/);
 	assert.doesNotMatch(text, /Greet the user/);
 	assert.doesNotMatch(text, /\*\*wait\*\*/);
-	for (const heading of ["## Assignment", "## Scope", "## Steps", "## How to verify"]) assert.ok(text.includes(heading), heading);
+	for (const heading of ["## Assignment", "## Questions and answers", "## Scope", "## Steps", "## How to verify"])
+		assert.ok(text.includes(heading), heading);
+	assert.match(text, /verbatim/);
 	assert.match(text, /do not change any project file other than the plan/);
 });
 
-test("Plan reviewer: gets the plan and the summary, not an original assignment; may ask the user", () => {
+test("Plan reviewer: gets the plan and the summary; the plan's Assignment and Questions and answers are the request and what was settled; may ask the user", () => {
 	const text = buildBriefing(base({ agent: "plan-reviewer", summary: "plan covers X and Y" }));
 	assert.match(text, /plan covers X and Y/);
-	assert.match(text, /do \*\*not\*\* have the user's original request/);
+	assert.match(text, /Questions and answers/);
+	assert.match(text, /original request verbatim/);
 	assert.match(text, /ask them directly/);
 	assert.match(text, /do not fix/);
-	assert.match(text, /Scope.*Completeness.*Concreteness.*Decisions.*Verification/s);
+	assert.match(text, /Scope.*Assignment.*Questions and answers.*Completeness.*Concreteness.*Decisions.*Verification/s);
 });
 
 test("Developer: implement the plan, run checks, git baseline (clean / dirty / none)", () => {

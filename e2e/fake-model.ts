@@ -109,7 +109,7 @@ function brain(context: TranscriptContext) {
 					return call(
 						fauxToolCall("write", {
 							path: planPath,
-							content: `# Plan\n\n## Assignment\nThe user said: "${answer}"\n\n## Scope\n- In: ${answer}\n- Out: everything else\n\n## Steps\n1. Create hello.txt in the project root.\n\n## How to verify\n\`cat hello.txt\`\n${pad}`,
+							content: `# Plan\n\n## Assignment\nThe user said: "${answer}"\n\n## Questions and answers\nNone asked.\n\n## Scope\n- In: ${answer}\n- Out: everything else\n\n## Steps\n1. Create hello.txt in the project root.\n\n## How to verify\n\`cat hello.txt\`\n${pad}`,
 						}),
 					);
 				}
@@ -125,7 +125,7 @@ function brain(context: TranscriptContext) {
 					return call(
 						fauxToolCall("write", {
 							path: planPath,
-							content: `# Plan\n\n## Assignment\nrevised\n\n## Scope\n- In: REVIEWED (feedback was: ${said})\n\n## Steps\n1. Create hello.txt\n${pad}`,
+							content: `# Plan\n\n## Assignment\nrevised\n\n## Questions and answers\nNone asked.\n\n## Scope\n- In: REVIEWED (feedback was: ${said})\n\n## Steps\n1. Create hello.txt\n${pad}`,
 						}),
 					);
 				}
