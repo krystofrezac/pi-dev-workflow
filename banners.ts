@@ -1,12 +1,13 @@
 /**
- * Banners in the chat: a band whenever the active agent changes, one when an agent's context is compacted, and one when
- * the workflow ends. All are `display: true` custom messages; these renderers replace pi's default drawing.
+ * Banners in the chat: a band whenever the active agent changes (it carries the start of the briefing the agent got), one
+ * when an agent's context is compacted, and one when the workflow ends. All are `display: true` custom messages; these
+ * renderers replace pi's default drawing.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { getMarkdownTheme } from "@earendil-works/pi-coding-agent";
+import { getMarkdownTheme, keyHint } from "@earendil-works/pi-coding-agent";
 import { Box, Markdown, Text } from "@earendil-works/pi-tui";
-import { briefingTitle } from "./briefings.ts";
+import { briefingBody, briefingPreview, briefingTitle } from "./briefings.ts";
 import { type SummaryDetails, summaryTitle } from "./compaction.ts";
 import { BRIEFING_TYPE, END_TYPE, SUMMARY_TYPE } from "./context.ts";
 import { AGENT_LABEL, type Agent, type Outcome } from "./machine.ts";
@@ -38,11 +39,23 @@ export function registerBanners(pi: ExtensionAPI): void {
 		if (!d) return undefined;
 		const box = new Box(outputPad, 1, (text) => theme.bg("customMessageBg", text));
 		box.addChild(new Text(theme.fg("accent", theme.bold(`▶ ${briefingTitle(d.agent, d.round, d.roundLimit)}`)), 0, 0));
+		const text =
+			typeof message.content === "string" ? message.content : message.content.map((c) => (c.type === "text" ? c.text : "")).join("");
+		const body = briefingBody(text);
+		if (body === "") return box;
+		box.addChild(new Text("", 0, 0));
 		if (expanded) {
-			const text =
-				typeof message.content === "string" ? message.content : message.content.map((c) => (c.type === "text" ? c.text : "")).join("");
-			box.addChild(new Text("", 0, 0));
-			box.addChild(new Markdown(text, 0, 0, getMarkdownTheme()));
+			box.addChild(new Markdown(body, 0, 0, getMarkdownTheme()));
+			return box;
+		}
+		const { shown, hidden } = briefingPreview(text);
+		box.addChild(new Markdown(shown, 0, 0, getMarkdownTheme()));
+		if (hidden > 0) {
+			const note =
+				theme.fg("muted", `… ${hidden} more ${hidden === 1 ? "line" : "lines"} (`) +
+				keyHint("app.tools.expand", "to expand") +
+				theme.fg("muted", ")");
+			box.addChild(new Text(note, 0, 0));
 		}
 		return box;
 	});

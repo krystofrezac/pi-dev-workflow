@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { type BriefingInput, briefingTitle, buildBriefing } from "./briefings.ts";
+import { BRIEFING_PREVIEW_LINES, type BriefingInput, briefingBody, briefingPreview, briefingTitle, buildBriefing } from "./briefings.ts";
 
 const base = (patch: Partial<BriefingInput>): BriefingInput => ({
 	agent: "planner",
@@ -172,4 +172,55 @@ test("Planner sent back by the user: the comments, then the fixed sentence about
 test("the user's comments stay verbatim, line breaks included; the fixed sentence comes after them", () => {
 	const text = buildBriefing(base({ resumed: true, feedback: { from: "user", text: "first\n\nsecond" } }));
 	assert.equal(text, `# Planning · Planner · round 1/3\n\nReturned from the user: first\n\nsecond\n\n${FIXED_SENTENCE}`);
+});
+
+test("briefingBody: the title line and the blank line after it are removed", () => {
+	assert.equal(briefingBody("# Title\n\nfirst\nsecond"), "first\nsecond");
+	assert.equal(briefingBody("# Title\n\n\n  \nfirst"), "first");
+});
+
+test("briefingBody: a text without a `# ` first line is not cut at the top", () => {
+	assert.equal(briefingBody("first\nsecond"), "first\nsecond");
+	assert.equal(briefingBody("\n\nfirst"), "first");
+	assert.equal(briefingBody("## Heading\nfirst"), "## Heading\nfirst");
+});
+
+test("briefingPreview: five lines or fewer are all shown, nothing is hidden", () => {
+	assert.equal(BRIEFING_PREVIEW_LINES, 5);
+	assert.deepEqual(briefingPreview("# T\n\na\nb"), { shown: "a\nb", hidden: 0 });
+	assert.deepEqual(briefingPreview("# T\n\na\nb\nc\nd\ne"), { shown: "a\nb\nc\nd\ne", hidden: 0 });
+});
+
+test("briefingPreview: a longer text is cut after the 5th non-blank line and the rest is counted", () => {
+	assert.deepEqual(briefingPreview("# T\n\na\nb\nc\nd\ne\nf\ng"), { shown: "a\nb\nc\nd\ne", hidden: 2 });
+	assert.deepEqual(briefingPreview("# T\n\na\nb\nc\nd\ne\nf"), { shown: "a\nb\nc\nd\ne", hidden: 1 });
+	assert.deepEqual(briefingPreview("# T\n\na\nb\nc\nd", 2), { shown: "a\nb", hidden: 2 });
+});
+
+test("briefingPreview: blank lines do not count; those between shown lines stay, those after the last one do not", () => {
+	assert.deepEqual(briefingPreview("# T\n\na\n\nb\n\nc\n\nd\n\ne"), { shown: "a\n\nb\n\nc\n\nd\n\ne", hidden: 0 });
+	assert.deepEqual(briefingPreview("# T\n\na\nb\nc\nd\ne\n\n  \nf\n\n"), { shown: "a\nb\nc\nd\ne", hidden: 1 });
+	assert.deepEqual(briefingPreview("# T\n\na\nb\n\n\n"), { shown: "a\nb", hidden: 0 });
+});
+
+test("briefingPreview: a text without a `# ` first line is not cut at the top", () => {
+	assert.deepEqual(briefingPreview("a\nb"), { shown: "a\nb", hidden: 0 });
+});
+
+test("briefingPreview of the Planner's first briefing: long, starts with the role", () => {
+	const { shown, hidden } = briefingPreview(buildBriefing(base({})));
+	assert.ok(hidden > 0);
+	assert.ok(shown.startsWith("You are the **Planner**."), shown);
+	assert.equal(shown.split("\n").filter((l) => l.trim() !== "").length, 5);
+});
+
+test("briefingPreview of the Plan reviewer's first briefing: the Planner's hand-over note is shown", () => {
+	const { shown, hidden } = briefingPreview(buildBriefing(base({ agent: "plan-reviewer", summary: "plan ready" })));
+	assert.ok(hidden > 0);
+	assert.ok(shown.includes("plan ready"), shown);
+});
+
+test("briefingPreview of a continuation: short, nothing hidden, the feedback is shown", () => {
+	const text = buildBriefing(base({ round: 2, resumed: true, feedback: { from: "reviewer", text: "add the word REVIEWED" } }));
+	assert.deepEqual(briefingPreview(text), { shown: "Returned from Plan reviewer: add the word REVIEWED", hidden: 0 });
 });

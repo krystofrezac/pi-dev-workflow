@@ -40,6 +40,7 @@ ROWS, COLS = 1500, 170  # very tall, so the whole chat is on "screen" at once
 DOWN, ENTER = "\x1b[B", "\r"
 BANNER = "▶ Planning · Planner · round 1/3"  # the "workflow started" signal
 HINT = "Planner is ready — describe what you want to build."  # a literal on purpose: not imported from index.ts
+MORE = re.compile(r"… \d+ more lines? \(")  # the note under a shortened briefing (pi's own `(4 more lines, 14 total, …)` does not match)
 results = []
 
 
@@ -190,6 +191,15 @@ def activations(reqs):
     return out
 
 
+def banner_slice(screen_text, banner):
+    """The screen text from `banner` to the next `▶ ` banner (or the end of the screen), or None when `banner` is not on screen."""
+    start = screen_text.find(banner)
+    if start < 0:
+        return None
+    end = screen_text.find("▶ ", start + 1)
+    return screen_text[start:] if end < 0 else screen_text[start:end]
+
+
 def bar_has(screen_text, title):
     return f"╭─ {title}" in screen_text
 
@@ -242,6 +252,8 @@ def full():
     s = t.text()
     check("banner on screen: ▶ Planning · Planner · round 1/3", BANNER in s)
     check("the hint tells the user to describe what they want, below the banner", HINT in s and s.index(BANNER) < s.index(HINT), s[-900:])
+    start = s[s.index(BANNER):s.index(HINT)] if BANNER in s and HINT in s else ""
+    check("the Planner's banner shows the start of its briefing and a `… N more lines` note, above the hint", "You are the Planner." in start and MORE.search(start), start)
     check("bottom bar on screen: Planning · round 1/3, Planner active, Development not started",
           bar_has(s, "Planning · round 1/3") and "▶ Planner" in s and "Development · not started" in s, s[-900:])
     rows = bar_rows(s)
@@ -267,6 +279,12 @@ def full():
     check("a banner for every switch (planner 1, reviewer 1, planner 2, reviewer 2)",
           all(x in s for x in ["▶ Planning · Planner · round 1/3", "▶ Planning · Plan reviewer · round 1/3", "▶ Planning · Planner · round 2/3", "▶ Planning · Plan reviewer · round 2/3"]))
     check("the earlier agents' conversation is still on screen", "a hello file" in s)
+    review1 = banner_slice(s, "▶ Planning · Plan reviewer · round 1/3") or ""
+    check("the Plan reviewer's first banner shows the start of its briefing with the Planner's hand-over note, and a `… N more lines` note",
+          "You are the Plan reviewer." in review1 and "plan ready" in review1 and MORE.search(review1), review1)
+    again = banner_slice(s, "▶ Planning · Planner · round 2/3") or ""
+    check("the Planner's round-2 banner shows the whole short message and no `more lines` note",
+          "Returned from Plan reviewer: add the word REVIEWED to the plan" in again and not MORE.search(again), again)
     check("the dialog shows the plan path and the reviewer's note", "plan approved: it stays in scope" in s and ".pi/dev/0001/plan.md" in s)
     check("the bar shows Planner ✓ and Plan reviewer ▶ in round 2/3", bar_has(s, "Planning · round 2/3") and "✓ Planner" in s and "▶ Plan reviewer" in s)
     rows = bar_rows(s)
@@ -295,6 +313,15 @@ def full():
     check("banners for the development stage",
           all(x in s for x in ["▶ Development · Developer · round 1/3", "▶ Development · Code reviewer · round 1/3", "▶ Development · Developer · round 2/3", "▶ Development · Code reviewer · round 2/3"]))
     check("everything is still on screen after the end (assignment, reviewer feedback)", "a hello file" in s and "add a second line to hello.txt" in s)
+    t.send("\x0f", 1.0)  # Ctrl+O: expand
+    s_open = t.text()
+    t.dump("expanded")
+    first_open = banner_slice(s_open, BANNER) or ""
+    check("Ctrl+O shows the whole briefing under the Planner's first banner, without the `more lines` note",
+          "How this workflow works" in first_open and not MORE.search(first_open), first_open[-600:])
+    check("…and the title is on screen once, as the banner, not again as a `# …` heading", "# Planning · Planner · round 1/3" not in s_open and s_open.count(BANNER) == 1)
+    t.send("\x0f", 1.0)  # Ctrl+O: collapse again
+    check("Ctrl+O again brings the short view back", MORE.search(banner_slice(t.text(), BANNER) or "") is not None)
     tail = s.split("Workflow finished")[-1]
     check("the bottom bar is gone after the workflow", "╭─" not in tail)
     banner = s[s.rfind("✓ Workflow finished"):]

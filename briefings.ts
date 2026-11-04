@@ -60,6 +60,33 @@ export function briefingTitle(agent: Agent, round: number, roundLimit: number): 
 	return `${STAGE_LABEL[stageOf(agent)]} · ${AGENT_LABEL[agent]} · round ${round}/${roundLimit}`;
 }
 
+/** How many non-blank lines of a briefing the chat shows under the banner title before the rest is hidden. */
+export const BRIEFING_PREVIEW_LINES = 5;
+
+/** A briefing without its `# <title>` first line and the blank lines after it: the banner shows the title itself. */
+export function briefingBody(text: string): string {
+	const lines = text.split("\n");
+	if (lines[0]?.startsWith("# ")) lines.shift();
+	while (lines.length > 0 && lines[0]?.trim() === "") lines.shift();
+	return lines.join("\n");
+}
+
+/**
+ * The start of a briefing's body: everything up to and including the `maxLines`-th non-blank line (blank lines in between
+ * stay, blank lines do not count), and how many non-blank lines are left out.
+ */
+export function briefingPreview(text: string, maxLines = BRIEFING_PREVIEW_LINES): { shown: string; hidden: number } {
+	const lines = briefingBody(text).split("\n");
+	let counted = 0;
+	let end = 0; // one past the last line that is shown
+	for (const [i, line] of lines.entries()) {
+		if (line.trim() === "") continue;
+		counted++;
+		if (counted <= maxLines) end = i + 1;
+	}
+	return { shown: lines.slice(0, end).join("\n"), hidden: Math.max(0, counted - maxLines) };
+}
+
 /** The message for an agent that is activated again: its earlier conversation is in its context, so only the news follows. */
 function continuation(input: BriefingInput): string {
 	const title = `# ${briefingTitle(input.agent, input.round, input.roundLimit)}`;
