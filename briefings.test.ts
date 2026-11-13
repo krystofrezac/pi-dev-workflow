@@ -28,6 +28,21 @@ test("every briefing names the plan file, its role, and the hand-over rules", ()
 	}
 });
 
+test("every briefing tells the agent to answer a user's question in chat and not hand over", () => {
+	for (const agent of ["planner", "plan-reviewer", "developer", "code-reviewer"] as const) {
+		const text = buildBriefing(base({ agent }));
+		assert.match(
+			text,
+			/asks you a question, answer it in the chat and end your turn without calling a hand-over tool/,
+			`${agent}: answer, do not hand over`,
+		);
+	}
+	assert.match(
+		buildBriefing(base({ agent: "planner" })),
+		/done only when the plan file is complete and no questions to or from the user are open/,
+	);
+});
+
 test("only reviewers are told about `return`", () => {
 	assert.doesNotMatch(buildBriefing(base({ agent: "planner" })), /`return`/);
 	assert.doesNotMatch(buildBriefing(base({ agent: "developer" })), /`return`/);

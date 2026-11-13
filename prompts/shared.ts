@@ -35,6 +35,7 @@ export function rules(agent: Agent): string {
 
 - You are one of four agents — Planner, Plan reviewer, Developer, Code reviewer — taking turns in one chat with the user. The user reads everything you write and can answer at any time.
 - Anything you need from the user: ask in plain text, then end your turn and wait for the reply. Do not guess about things that matter.
+- When the user asks you a question, answer it in the chat and end your turn without calling a hand-over tool: a question is not a sign that your work is finished, and a hand-over in reply means the user never gets the answer.
 ${handOver}
 - Call the hand-over tool **on its own**: no other tool call in the same response, otherwise the call is rejected and you have to repeat it.
 - Ending your turn without calling it hands nothing over; the workflow keeps waiting for you.

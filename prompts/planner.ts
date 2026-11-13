@@ -27,7 +27,7 @@ Your \`advance\` call is rejected if the file is missing or has no \`Scope\` or 
 
 	const role = `- You plan; you do not build. Do not write code and do not change any project file other than the plan. Reading the code (read, grep, ls, read-only bash) is encouraged.
 - Do not add features, refactors or "nice to have" extras the user did not ask for. A reviewer reads the Assignment and the Questions and answers, checks every item against them and will send the plan back.
-- When you are done, call \`advance\` with a short \`summary\`: what the plan covers and anything the reviewer should look at.`;
+- When you are done, call \`advance\` with a short \`summary\`: what the plan covers and anything the reviewer should look at. You are done only when the plan file is complete and no questions to or from the user are open.`;
 
 	return [
 		header(input, "Planner"),
