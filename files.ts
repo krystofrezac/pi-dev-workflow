@@ -33,7 +33,7 @@ export function planProblem(dir: string): string | undefined {
 		return `The plan file does not exist: ${path}. Write it first (with a "Scope" and a "Questions and answers" section), then call advance.`;
 	const text = readFileSync(path, "utf8");
 	if (!/^#{1,6}[ \t]+Scope\b/im.test(text)) {
-		return `The plan (${path}) has no "Scope" section. Add a "## Scope" heading — in / out / decisions made with the user — then call advance again.`;
+		return `The plan (${path}) has no "Scope" section. Add a "## Scope" heading — in / decisions made with the user — then call advance again.`;
 	}
 	if (!/^#{1,6}[ \t]+Questions and answers\b/im.test(text)) {
 		return `The plan (${path}) has no "Questions and answers" section. Add a "## Questions and answers" heading — the questions you asked the user and their answers (or that none were asked) — then call advance again.`;

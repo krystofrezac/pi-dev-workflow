@@ -41,10 +41,15 @@ test("Planner, first round: starts from the user's first message, no greeting; m
 	assert.match(text, /How to start/);
 	assert.doesNotMatch(text, /Greet the user/);
 	assert.doesNotMatch(text, /\*\*wait\*\*/);
-	for (const heading of ["## Assignment", "## Questions and answers", "## Scope", "## Steps", "## How to verify"])
+	for (const heading of ["## Assignment", "## Questions and answers", "## Scope", "## Design", "## Steps", "## How to verify"])
 		assert.ok(text.includes(heading), heading);
 	assert.match(text, /verbatim/);
 	assert.match(text, /do not change any project file other than the plan/);
+	assert.match(text, /No code/);
+	assert.doesNotMatch(text, /\*\*Out\*\*/);
+	assert.match(text, /Say it once/);
+	const at = (heading: string) => text.indexOf(heading);
+	assert.ok(at("## Scope") < at("## Design") && at("## Design") < at("## Steps"), "Design sits between Scope and Steps");
 });
 
 test("Plan reviewer: gets the plan and the summary; the plan's Assignment and Questions and answers are the request and what was settled; may ask the user", () => {
@@ -54,7 +59,7 @@ test("Plan reviewer: gets the plan and the summary; the plan's Assignment and Qu
 	assert.match(text, /original request verbatim/);
 	assert.match(text, /ask them directly/);
 	assert.match(text, /do not fix/);
-	assert.match(text, /Scope.*Assignment.*Questions and answers.*Completeness.*Concreteness.*Decisions.*Verification/s);
+	assert.match(text, /Scope.*Assignment.*Questions and answers.*Completeness.*Concreteness.*Decisions.*Verification.*Readability/s);
 });
 
 test("Developer: implement the plan, run checks, git baseline (clean / dirty / none)", () => {
@@ -63,6 +68,7 @@ test("Developer: implement the plan, run checks, git baseline (clean / dirty / n
 	assert.match(clean, /abc123/);
 	assert.match(clean, /clean when development started/);
 	assert.match(clean, /run the relevant tests and checks/);
+	assert.match(clean, /implementation details are yours/);
 
 	const dirty = buildBriefing(base({ agent: "developer", baseline: { git: true, head: "abc123", dirtyFiles: ["x.ts"] } }));
 	assert.match(dirty, /already dirty/);
@@ -79,6 +85,7 @@ test("Code reviewer: summary, diff command against the baseline, scope/correctne
 	assert.match(text, /git diff abc123/);
 	assert.match(text, /Scope.*Correctness.*Code quality/s);
 	assert.match(text, /plan itself\*\* is wrong/);
+	assert.match(text, /implementation details against the codebase's conventions/);
 
 	assert.match(buildBriefing(base({ agent: "code-reviewer", baseline: { git: false } })), /rely on the Developer's note/);
 });
