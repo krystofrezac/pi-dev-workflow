@@ -58,6 +58,7 @@ import {
 } from "./machine.ts";
 import { registerTools } from "./tools.ts";
 import { agentContextTokens, isNoPrice, workflowTotals } from "./usage.ts";
+import { createWaiting, shouldWait, showWaitingOverlay, type TurnOutcome } from "./waiting.ts";
 
 const WIDGET_KEY = "dev-workflow";
 const HAND_OFF_TOOLS = ["advance", "return"];
@@ -92,6 +93,10 @@ export default function devWorkflow(pi: ExtensionAPI): void {
 	let barTui: TUI | undefined;
 	/** The figures next to the bar's boxes. Computed at events, read when the bar renders. */
 	let usage: BarUsage | undefined;
+	/** How the newest turn of the current run ended; a run has several turns, so it is reset when a run starts. */
+	let lastOutcome: TurnOutcome | undefined;
+	/** The invisible overlay that makes pi report "blocked" while an agent waits for the user. */
+	const waiting = createWaiting();
 
 	// ───────────────────────────── tools ─────────────────────────────
 
@@ -191,6 +196,7 @@ export default function devWorkflow(pi: ExtensionAPI): void {
 		state = undefined;
 		pending = undefined;
 		usage = undefined;
+		waiting.close();
 		hideBar(ctx);
 		ctx.ui.notify(outcome === "finished" ? `Workflow ${s.id} finished.` : `Workflow ${s.id} stopped.`, "info");
 	}
@@ -210,6 +216,7 @@ export default function devWorkflow(pi: ExtensionAPI): void {
 		}
 		state = restored;
 		pending = undefined;
+		waiting.close();
 		usage = state ? measureUsage(ctx, state) : undefined;
 		if (state) {
 			pi.setActiveTools(toolsFor(state));
@@ -222,7 +229,24 @@ export default function devWorkflow(pi: ExtensionAPI): void {
 
 	pi.on("session_start", (_event, ctx) => restore(ctx));
 	pi.on("session_tree", (_event, ctx) => restore(ctx));
-	pi.on("session_shutdown", (_event, ctx) => hideBar(ctx));
+	pi.on("session_shutdown", (_event, ctx) => {
+		waiting.close();
+		hideBar(ctx);
+	});
+
+	// ───────────────────────────── waiting for the user ─────────────────────────────
+
+	pi.on("agent_start", () => {
+		lastOutcome = undefined;
+		waiting.close(); // the user answered
+	});
+
+	/** The run is over, the workflow is still on the same agent and nothing was handed over: the agent waits for the user. */
+	pi.on("agent_settled", (event, ctx) => {
+		if (!shouldWait({ active: state !== undefined, aborted: event.aborted, outcome: lastOutcome })) return;
+		const agent = state?.agent;
+		if (agent) waiting.open(() => showWaitingOverlay(ctx, `${AGENT_LABEL[agent]} is waiting for your answer`));
+	});
 
 	// ───────────────────────────── context isolation ─────────────────────────────
 
@@ -405,6 +429,7 @@ export default function devWorkflow(pi: ExtensionAPI): void {
 		const tokens = usage?.context?.tokens;
 		const handOff = pending;
 		pending = undefined;
+		lastOutcome = event.outcome;
 		// The turn did not complete (Esc, error): the agent stays as it is.
 		if (!state || event.outcome !== "completed") return;
 

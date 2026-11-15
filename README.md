@@ -19,6 +19,9 @@ or add the path to `packages` in pi's `settings.json`:
 
 The package loads `index.ts` as it is: there is no build step.
 
+It needs pi 1.5.1 or newer. While the workflow waits for you (an agent asked a question and ended its turn), a terminal that reads
+pi's program status (OSC 7501), such as Rex, shows the pane as blocked.
+
 ## Development
 
 Needs Node 24 or newer and `python3` (for the e2e).
@@ -45,7 +48,7 @@ findings are fixed by hand.
 `npm run e2e` creates the Python venv (`.venv`, with `pyte`) on first use and runs the `pi` pinned in `package.json`
 (from `node_modules`). Every scenario runs with its own empty agent directory, so your pi config does not matter. Pass
 scenario names to run only some: `npm run e2e -- stop usage`. The scenarios are `full`, `stop`, `limit`, `abort`, `resume`,
-`compaction`, `manual-compact` and `usage`; `e2e/drive-tui.py` describes each one.
+`compaction`, `manual-compact`, `usage` and `waiting`; `e2e/drive-tui.py` describes each one.
 
 `real` is not part of `npm run check`: it runs the same flow with a real model, so it costs money, and it needs the
 credentials in your own pi agent directory. Run it with `npm run e2e -- real` (the model is `E2E_REAL_MODEL`, default

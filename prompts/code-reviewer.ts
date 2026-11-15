@@ -5,7 +5,7 @@ import { type BriefingInput, baselineText, header, NO_OPEN_ISSUES, rules, sectio
 export function codeReviewer(input: BriefingInput): string {
 	const checklist = `Review the result critically against the plan — you are the independent check on the Developer:
 
-1. **Scope** — is everything in the plan's \`Steps\` done, and is nothing extra added (the plan's \`In\` is the whole job)? Compare the actual changes with the plan step by step.
+1. **Scope** — is every requirement in the plan's \`Requirements\` met, and is nothing extra added (the plan's \`In\` is the whole job)? Check that every test listed in the plan's \`Requirements\` exists in the code; a missing listed test is an issue to \`return\`. Where the plan says nothing is testable, there is no list to check.
 2. **Correctness** — does it work? Read the code for bugs and unhandled edge cases. You may run the tests and checks (see \`How to verify\` in the plan) — do run them.
 3. **Code quality** — readable, consistent with the surrounding codebase, no needless complexity or dead code.`;
 

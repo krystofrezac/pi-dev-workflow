@@ -25,10 +25,12 @@ Scenarios (default: all)
     manual-compact  /compact while a workflow runs is refused with a notice and changes nothing
     usage       the bar's `agent ctx` figure belongs to the active agent only (a big Planner context is not carried over to the
                 Plan reviewer); the stopped banner shows cost and tokens
+    waiting     while the Planner waits for an answer pi reports `blocked` (OSC 7501), the editor still takes typing, the answer reports
+                `working`; Stop while it waits clears `blocked`
 
 Work dir: /tmp/dev-e2e/<scenario>  (screen dumps, request log and session are kept there)
 """
-import fcntl, json, os, pty, re, select, shutil, signal, struct, subprocess, sys, termios, time
+import base64, fcntl, json, os, pty, re, select, shutil, signal, struct, subprocess, sys, termios, time
 import pyte
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -41,6 +43,8 @@ DOWN, ENTER = "\x1b[B", "\r"
 BANNER = "▶ Planning · Planner · round 1/3"  # the "workflow started" signal
 HINT = "Planner is ready — describe what you want to build."  # a literal on purpose: not imported from index.ts
 MORE = re.compile(r"… \d+ more lines? \(")  # the note under a shortened briefing (pi's own `(4 more lines, 14 total, …)` does not match)
+STATUS = re.compile(rb"\x1b\]7501;([^\x07\x1b]*)\x1b\\")  # a program status report (OSC 7501)
+WAITING = "Planner is waiting for your answer"  # a literal on purpose: not imported from index.ts
 results = []
 
 
@@ -66,6 +70,7 @@ class Tui:
             subprocess.run(git + ["commit", "-q", "-m", "init"], cwd=self.repo, check=True)
             if settings:
                 json.dump(settings, open(self.repo + "/.pi/settings.json", "w"))
+        self.raw = bytearray()  # everything pi wrote to the terminal, as it came
         self.screen = pyte.Screen(COLS, ROWS)
         self.stream = pyte.ByteStream(self.screen)
         args = ["pi", "--approve", "--no-extensions", "--extension", EXT] + ([] if model else ["--extension", FAKE]) + [
@@ -97,8 +102,18 @@ class Tui:
                     return False
                 if not data:
                     return False
+                self.raw += data
                 self.stream.feed(data)
         return True
+
+    def statuses(self):
+        """The program status reports pi sent so far, in order, as (state, message): `state=blocked:app=pi:msg=…` → ("blocked", "…")."""
+        out = []
+        for body in STATUS.findall(bytes(self.raw)):
+            pairs = dict(p.split(b"=", 1) for p in body.split(b":") if b"=" in p)
+            msg = base64.b64decode(pairs[b"msg"]).decode() if b"msg" in pairs else ""
+            out.append((pairs.get(b"state", b"").decode(), msg))
+        return out
 
     def text(self):
         return "\n".join(line.rstrip() for line in self.screen.display).rstrip()
@@ -325,7 +340,7 @@ def full():
     tail = s.split("Workflow finished")[-1]
     check("the bottom bar is gone after the workflow", "╭─" not in tail)
     banner = s[s.rfind("✓ Workflow finished"):]
-    check("the finished banner shows `Cost: no price` and a `Tokens:` line", "Cost: no price" in banner and re.search(r"Tokens: \S+ in\b", banner), banner)
+    check("the finished banner shows `Cost: no price` and a `Tokens:` line", "Cost: no price" in banner and re.search(r"Tokens: \S+ (?:in|out)\b", banner), banner)
     check("the figures went with the bar: no `agent ctx` and no `workflow …` below the banner", "agent ctx" not in tail and "workflow no price" not in tail, tail)
 
     reqs = t.agent_requests()
@@ -428,7 +443,7 @@ def stop():
     t.pump(1)
     s = t.text()
     banner = s[s.rfind("✗ Workflow stopped"):]
-    check("the stopped banner shows `Cost:` and a `Tokens:` line (the Planner and the Plan reviewer answered)", "Cost:" in banner and re.search(r"Tokens: \S+ in\b", banner), banner)
+    check("the stopped banner shows `Cost:` and a `Tokens:` line (the Planner and the Plan reviewer answered)", "Cost:" in banner and re.search(r"Tokens: \S+ (?:in|out)\b", banner), banner)
     n = len(t.agent_requests())
     t.pump(2)
     check("…and no further model request was made", len(t.agent_requests()) == n)
@@ -620,10 +635,10 @@ def resume():
 
 def compaction():
     print("━━ compaction ━━")
-    # Per-agent compaction. Window 20000 tokens, reserve 9000, so an agent is compacted when its context passes 11000;
+    # Per-agent compaction. Window 20000 tokens, reserve 11990, so an agent is compacted when its context passes 8010;
     # `keepRecentTokens` is 200, so the cut falls at the Planner's big `write`. The plan carries 20000 chars of padding
-    # (~5k tokens), so the Planner's own answers report ~9.8k (the padded `write`) and ~12.6k (`advance`), the faux
-    # provider counting the whole context plus the output. The Plan reviewer returns once, so the Planner runs twice.
+    # (~5k tokens), so the Planner's own answers report ~7995 (the padded `write`) and ~8028 (`advance`), the faux
+    # provider counting the prompt plus the output. The Plan reviewer returns once, so the Planner runs twice.
     # Expected sequence:
     #  (a) Planner, round 1. The `write` answer is below the threshold; the `advance` answer is above it, so at the hand-off
     #      the Planner is compacted (compaction 1): only the user's one-line message lies before the cut (the cut splits a
@@ -639,7 +654,7 @@ def compaction():
     #  (e) The Plan reviewer approves; the plan confirmation opens.
     # So: two `dev-summary` messages and three summarisation requests. pi's own `Auto-compaction cancelled` lines are on
     # screen and not checked.
-    reserve = int(os.environ.get("E2E_RESERVE", "9000"))
+    reserve = int(os.environ.get("E2E_RESERVE", "11990"))
     t = Tui("compaction", env={"E2E_CONTEXT_WINDOW": "20000", "E2E_PAD": "20000", "E2E_NO_COMBO": "1"},
             settings={"compaction": {"enabled": True, "reserveTokens": reserve, "keepRecentTokens": 200}})
     t.type_line("/dev")
@@ -740,6 +755,58 @@ def manual_compact():
     t.close()
 
 
+def waiting():
+    print("━━ waiting ━━")
+    # PI_PROGRAM_STATUS=1: pi sends its status reports (OSC 7501) without asking the terminal first.
+    t = Tui("waiting", env={"E2E_ASK": "1", "PI_PROGRAM_STATUS": "1"})
+    t.type_line("/dev")
+    t.wait(BANNER, 30)
+    check("before the workflow waits for anything, no report says `blocked`", not any(st == "blocked" for st, _ in t.statuses()), t.statuses())
+    t.type_line("a hello file")
+    check("the Planner asks its question and waits", t.wait("Which file name do you want?", 30))
+    t.pump(1.5)
+    states = t.statuses()
+    check("the question is reported as blocked, and the report is the last one", states and states[-1] == ("blocked", WAITING), states[-4:])
+    before = t.text()
+    t.send("hello.t", 1.0)
+    s = t.text()
+    check("the editor still takes typing while the workflow waits", "hello.t" in s, s[-600:])
+    t.send("\x15", 0.5)  # Ctrl+U: clear the line
+    check("the overlay draws nothing: with the typed text cleared, the screen is what it was", t.text() == before, "")
+    mark = len(t.statuses())
+    t.type_line("hello.txt")  # the answer
+    ok = t.wait("Confirm the plan", 60)
+    t.pump(1)
+    after = t.statuses()[mark:]
+    check("the answer is reported as working", ok and any(st == "working" for st, _ in after), after)
+    check("no `waiting` report after the answer: hand-offs between agents do not flash blocked", WAITING not in [m for _, m in after], after)
+    check("the plan confirmation dialog is reported as blocked (pi's own report)", after and after[-1][0] == "blocked" and "Confirm the plan" in after[-1][1], after[-2:])
+    t.send(DOWN); t.send(DOWN); t.send(DOWN)
+    t.send(ENTER, 1.5)  # Stop workflow
+    ok = t.wait("Workflow stopped", 10)
+    t.pump(1)
+    states = t.statuses()
+    check("the workflow stopped, and the last report is not blocked", ok and states[-1][0] != "blocked", states[-3:])
+    t.close()
+
+    # Stopping the workflow while the Planner waits ends the blocked state.
+    t = Tui("waiting-stop", env={"E2E_ASK": "1", "PI_PROGRAM_STATUS": "1"})
+    t.type_line("/dev")
+    t.wait(BANNER, 30)
+    t.type_line("a hello file")
+    t.wait("Which file name do you want?", 30)
+    t.pump(1.5)
+    check("the Planner waits and the pane is blocked", t.statuses()[-1] == ("blocked", WAITING), t.statuses()[-3:])
+    t.type_line("/dev")
+    check("the stop dialog is open", t.wait("is running", 10), t.text()[-600:])
+    t.send(ENTER, 1.5)  # Stop workflow
+    ok = t.wait("Workflow stopped", 10)
+    t.pump(1)
+    states = t.statuses()
+    check("stopped while waiting: the last report is not blocked", ok and states[-1][0] != "blocked", states[-3:])
+    t.close()
+
+
 def usage():
     print("━━ usage ━━")
     # A big Planner context (the plan carries 20000 chars of padding), then the Plan reviewer, whose own context is small.
@@ -773,11 +840,11 @@ def usage():
     t.pump(1)
     banner = t.text()
     banner = banner[banner.rfind("✗ Workflow stopped"):]
-    check("Stop at the plan confirmation: the stopped banner shows `Cost: no price` and a `Tokens:` line", ok and "Cost: no price" in banner and re.search(r"Tokens: \S+ in\b", banner), banner)
+    check("Stop at the plan confirmation: the stopped banner shows `Cost: no price` and a `Tokens:` line", ok and "Cost: no price" in banner and re.search(r"Tokens: \S+ (?:in|out)\b", banner), banner)
     t.close()
 
 
-SCENARIOS = {"full": full, "stop": stop, "limit": limit, "abort": abort, "resume": resume, "compaction": compaction, "manual-compact": manual_compact, "usage": usage}
+SCENARIOS = {"full": full, "stop": stop, "limit": limit, "abort": abort, "resume": resume, "compaction": compaction, "manual-compact": manual_compact, "usage": usage, "waiting": waiting}
 OPT_IN = {"real": real}
 
 if __name__ == "__main__":

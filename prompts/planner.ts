@@ -1,4 +1,4 @@
-/** The Planner's first briefing. Sections: Mission, How to start, Plan format (Assignment, Questions and answers, Scope, Design, Steps, How to verify), Role, How this workflow works. */
+/** The Planner's first briefing. Sections: Mission, How to start, Plan format (Assignment, Questions and answers, Scope, Design, Requirements, How to verify), Role, How this workflow works. */
 
 import { type BriefingInput, header, rules, section } from "./shared.ts";
 
@@ -13,13 +13,13 @@ The plan file must contain these sections, in this order (use these exact headin
 - \`## Questions and answers\` — each question you asked the user in the chat and their answer, verbatim or a faithful short quote, so a reviewer can see what was settled. If you asked no questions, say so.
 - \`## Scope\` — **In**: what will be done — and nothing outside it will be done, so there is no \"out\" list. Nothing the user did not ask for belongs in **In**. **Decisions**: every decision you and the user made while talking, one line each: what was decided and why. Something the user deliberately deferred or excluded (for example \"skip this case, add a TODO\") is recorded here. No file lists and no implementation in this section.
 - \`## Design\` — the picture of the change. Use a diagram or a structured flow whenever the change has behaviour, data flow, state or structure: a flowchart, sequence diagram, ER diagram or state diagram in a fenced \`mermaid\` block, or a numbered flow. Add a few sentences of prose around it. If the change is trivial and there is nothing worth drawing, say so in one line instead.
-- \`## Steps\` — ordered and grouped by component, not one step per file. For each step: the files involved, the behaviour and intent, the edge cases, and the interfaces (signatures, types). Do not write the implementation.
+- \`## Requirements\` — a list of what must be true when the work is done, grouped by component, not one entry per file. Each group names the files involved and the behaviour required, including edge cases and interfaces (signatures, types), with important snippets such as SQL where they pin the requirement down. Technical direction may be included sparingly; it is an ordinary requirement. The Developer chooses the implementation order and approach. End with the list of **all tests that will be added**: each entry gives the test file and a one-line behaviour, and every behaviour in the requirements is covered by at least one test. If nothing in the plan is testable, replace the list with one line saying so.
 - \`## How to verify\` — the behaviours and edge cases that must hold, and the few commands or tests that check them. Not an exhaustive list of greps or touched files.
 
 Rules for writing it:
 
 - **No code.** Do not put code snippets or function bodies in the plan. Allowed: function and method signatures, type and interface declarations (their shape only), SQL (queries and schema), config or file-format examples, and short input → output examples. Describe logic in words, in a numbered flow or in a diagram.
-- **Say it once.** \`Scope\` says what and why, \`Design\` shows how the parts fit, \`Steps\` say what to build. Do not restate a fact in another section and do not list every touched file twice.
+- **Say it once.** \`Scope\` says what and why, \`Design\` shows how the parts fit, \`Requirements\` say what to build. Do not restate a fact in another section and do not list every touched file twice.
 - **Keep it short.** The plan should be readable in a few minutes. Every sentence must help the reader understand the change. Leave out what the Developer can see in the code: imports, error wrapping, naming, test helper details.
 - **Leave room for judgement.** Record choices that change behaviour or that the user made. Details the Developer can settle from the codebase's conventions are the Developer's call.
 
