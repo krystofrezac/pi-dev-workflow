@@ -242,6 +242,24 @@ test("the user's comments stay verbatim, line breaks included; the fixed sentenc
 	assert.equal(text, `# Planning · Planner · round 1/3\n\nReturned from the user: first\n\nsecond\n\n${FIXED_SENTENCE}`);
 });
 
+test("Code reviewer given the user's comments: the comments verbatim, then the instruction to check them and return to the Developer", () => {
+	const text = buildBriefing(
+		base({
+			agent: "code-reviewer",
+			round: 2,
+			resumed: true,
+			feedback: { from: "user", text: "the null check\n\nis still missing" },
+			baseline: { git: true, head: "abc123", dirtyFiles: [] },
+		}),
+	);
+	assert.match(text, /^# Development · Code reviewer · round 2\/3\n\nReturned from the user: the null check\n\nis still missing\n\n/);
+	assert.match(text, /Check each comment in the code/);
+	assert.match(text, /`return` to the Developer with concrete, actionable feedback/);
+	assert.match(text, /`advance` only when no issue is open/);
+	assert.doesNotMatch(text, /plan file may have been edited/);
+	for (const part of NOT_A_BRIEFING) assert.ok(!text.includes(part), part);
+});
+
 test("briefingBody: the title line and the blank line after it are removed", () => {
 	assert.equal(briefingBody("# Title\n\nfirst\nsecond"), "first\nsecond");
 	assert.equal(briefingBody("# Title\n\n\n  \nfirst"), "first");

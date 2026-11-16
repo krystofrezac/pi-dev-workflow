@@ -18,7 +18,7 @@ export interface BriefingDetails {
 	agent: Agent;
 	round: number;
 	roundLimit: number;
-	/** The user's comment text, when the briefing hands the plan back to the Planner with the user's feedback. */
+	/** The user's comments when the work is handed back to an agent with the user's feedback. */
 	userFeedback?: string;
 }
 

@@ -2,8 +2,9 @@
  * The workflow as a state machine. Pure: no pi imports, no I/O, no dialogs.
  *
  * `transition()` turns a hand-off (`advance` / `return`) into the next step. Where the user has to
- * decide something (plan confirmation, round limit) the step says so and the caller — which owns the
- * dialogs — feeds the answer back through `resolvePlanConfirmation()` / `resolveRoundLimit()`.
+ * decide something (plan confirmation, code confirmation, round limit) the step says so and the
+ * caller — which owns the dialogs — feeds the answer back through `resolvePlanConfirmation()` /
+ * `resolveCodeConfirmation()` / `resolveRoundLimit()`.
  * Every function returns new objects; a state is never mutated.
  */
 
@@ -77,7 +78,7 @@ export interface HandOff {
 	text: string;
 }
 
-/** Feedback an author is given when work comes back: from a reviewer, or from you at the plan confirmation. */
+/** Feedback an agent is given when work comes back: from a reviewer, or from you at a confirmation. */
 export interface Feedback {
 	from: "reviewer" | "user";
 	text: string;
@@ -88,6 +89,8 @@ export type Next =
 	| { type: "activate"; summary?: string; feedback?: Feedback }
 	/** Ask the user to confirm the plan. `approved`: the Plan reviewer approved it (`note` is its approval note); otherwise the user accepted it at the round limit. */
 	| { type: "confirm-plan"; note: string; approved: boolean }
+	/** Ask the user to confirm the work the Code reviewer approved (`note` is its approval note). */
+	| { type: "confirm-code"; note: string }
 	/** Ask the user what to do after `roundLimit` rounds without approval. */
 	| { type: "round-limit"; stage: Stage; feedback: string }
 	| { type: "end"; outcome: Outcome; note?: string };
@@ -133,7 +136,7 @@ export function transition(state: WorkflowState, handOff: HandOff): Step {
 				: returned(done, handOff.text);
 		case "code-reviewer":
 			return handOff.kind === "advance"
-				? { state: done, next: { type: "end", outcome: "finished", note: handOff.text } }
+				? { state: done, next: { type: "confirm-code", note: handOff.text } }
 				: returned(done, handOff.text);
 	}
 }
@@ -152,6 +155,19 @@ export function resolvePlanConfirmation(state: WorkflowState, choice: PlanChoice
 			return activate(state, "planner", { feedback: { from: "user", text: choice.comments } });
 		case "stop":
 			return { state, next: { type: "end", outcome: "stopped" } };
+	}
+}
+
+export type CodeChoice = { kind: "finish" } | { kind: "comment"; comments: string };
+
+/** The user answered the code confirmation; `note` is the Code reviewer's approval note. */
+export function resolveCodeConfirmation(state: WorkflowState, choice: CodeChoice, note: string): Step {
+	switch (choice.kind) {
+		case "finish":
+			return { state, next: { type: "end", outcome: "finished", note } };
+		case "comment":
+			// The round number is not increased: your comments are not a reviewer round.
+			return activate(state, "code-reviewer", { feedback: { from: "user", text: choice.comments } });
 	}
 }
 

@@ -80,11 +80,17 @@ All transitions are applied at the `turn_end` boundary, after the tool call comp
 | Plan reviewer `advance` | **plan confirmation dialog** (below) |
 | Developer `advance` | Code reviewer |
 | Code reviewer `return` | round < limit → Developer, round + 1. Round = limit → **limit dialog** |
-| Code reviewer `advance` | finish workflow |
+| Code reviewer `advance` | **code confirmation dialog** (below) |
 
 **Plan confirmation dialog** — `select`: *Approve and start development* · *Edit plan…* (opens the plan in
 `ctx.ui.editor`, saved back to the file, then asks again) · *Send back to Planner…* (user comments become the
 feedback; the round number is **not** increased) · *Stop workflow*.
+
+**Code confirmation dialog** — `select`, titled "Code review passed" with the reviewer's approval note: *Finish workflow* ·
+*Send comments to Code reviewer…* (opens `ctx.ui.editor`; the user's text re-activates the Code reviewer in the same
+round, with the short continuation message that tells it to check the comments and `return` to the Developer if they
+hold; the round number is **not** increased; empty text re-asks the dialog). The reviewer's own `return` after that is
+an ordinary return. There is no *Stop* option: the work is already approved.
 
 **Limit dialog** — *Continue* (limit += 1, i.e. one more round; author gets the feedback) · *Accept as is* (Planning: go to plan
 confirmation; Development: finish) · *Stop workflow*.
@@ -92,7 +98,7 @@ confirmation; Development: finish) · *Stop workflow*.
 **Finish / stop** — append the closing note (`dev-end`, §6), restore the previous active tool set, clear the
 widget, notify. Files already written stay. At a boundary the note is appended **without** `continue`; the run ends because
 the last tool batch terminated (§5). A turn that did not complete (Esc, error) drops any recorded hand-off: the agent stays.
-A dialog that is dismissed (Esc) is asked again; three dismissals in a row count as *Stop*.
+A dialog that is dismissed (Esc) is asked again.
 
 ## 5. Tools
 

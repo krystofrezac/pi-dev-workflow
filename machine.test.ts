@@ -5,6 +5,7 @@ import {
 	initialState,
 	type Next,
 	parseState,
+	resolveCodeConfirmation,
 	resolvePlanConfirmation,
 	resolveRoundLimit,
 	type Step,
@@ -82,15 +83,52 @@ test("Developer advance → Code reviewer", () => {
 	assert.deepEqual(step.state.visited, ["developer"]);
 });
 
-test("Code reviewer return → Developer, round + 1; advance → finished with the note", () => {
+test("Code reviewer return → Developer, round + 1; advance → code confirmation with the note", () => {
 	const back = transition(at("code-reviewer", { visited: ["developer"] }), ret("bug in x"));
 	assert.equal(back.state.agent, "developer");
 	assert.equal(back.state.round.development, 2);
 	assert.equal(back.state.round.planning, 1);
 	assert.deepEqual(nextOf(back, "activate").feedback, { from: "reviewer", text: "bug in x" });
 
-	const done = transition(at("code-reviewer"), advance("all good"));
-	assert.deepEqual(done.next, { type: "end", outcome: "finished", note: "all good" });
+	const done = transition(at("code-reviewer", { visited: ["developer"] }), advance("all good"));
+	assert.deepEqual(done.next, { type: "confirm-code", note: "all good" });
+	assert.equal(done.state.agent, "code-reviewer");
+});
+
+test("code confirmation: finish → end finished with the reviewer's note", () => {
+	const confirm = transition(at("code-reviewer", { visited: ["developer"] }), advance("all good"));
+	const step = resolveCodeConfirmation(confirm.state, { kind: "finish" }, nextOf(confirm, "confirm-code").note);
+	assert.deepEqual(step.next, { type: "end", outcome: "finished", note: "all good" });
+});
+
+test("code confirmation: comment → Code reviewer with your comments, round NOT increased, not ✓, Developer still ✓", () => {
+	const s = at("code-reviewer", { round: { planning: 1, development: 2 }, visited: ["developer"] });
+	const confirm = transition(s, advance("all good"));
+	assert.deepEqual(confirm.state.visited, ["developer", "code-reviewer"]);
+	const step = resolveCodeConfirmation(confirm.state, { kind: "comment", comments: "check the null case" }, "all good");
+	assert.equal(step.state.agent, "code-reviewer");
+	assert.deepEqual(step.state.round, { planning: 1, development: 2 });
+	assert.deepEqual(nextOf(step, "activate").feedback, { from: "user", text: "check the null case" });
+	assert.deepEqual(step.state.visited, ["developer"]);
+});
+
+test("code confirmation: after your comments the reviewer's return is an ordinary return (round + 1)", () => {
+	const s = at("code-reviewer", { round: { planning: 1, development: 2 }, visited: ["developer"] });
+	const confirm = transition(s, advance("all good"));
+	const commented = resolveCodeConfirmation(confirm.state, { kind: "comment", comments: "x" }, "all good");
+	const back = transition(commented.state, ret("null check missing"));
+	assert.equal(back.state.agent, "developer");
+	assert.equal(back.state.round.development, 3);
+	assert.deepEqual(nextOf(back, "activate").feedback, { from: "reviewer", text: "null check missing" });
+});
+
+test("code confirmation: after your comments the reviewer's return at the round limit asks", () => {
+	const s = at("code-reviewer", { round: { planning: 1, development: 3 }, visited: ["developer"] });
+	const confirm = transition(s, advance("all good"));
+	const commented = resolveCodeConfirmation(confirm.state, { kind: "comment", comments: "x" }, "all good");
+	const step = transition(commented.state, ret("null check missing"));
+	assert.deepEqual(step.next, { type: "round-limit", stage: "development", feedback: "null check missing" });
+	assert.equal(step.state.round.development, 3);
 });
 
 test("an author cannot return work", () => {
@@ -129,6 +167,7 @@ test("round limit: Accept as is → plan confirmation (planning) / finish (devel
 	const end = nextOf(development, "end");
 	assert.equal(end.outcome, "finished");
 	assert.match(end.note ?? "", /Accepted as is/);
+	assert.equal(development.state.agent, "code-reviewer");
 });
 
 test("round limit: Stop → end stopped", () => {
@@ -142,6 +181,7 @@ test("states are never mutated", () => {
 	transition(s, ret("x"));
 	transition(s, advance());
 	resolvePlanConfirmation(s, { kind: "approve" });
+	resolveCodeConfirmation(s, { kind: "comment", comments: "x" }, "ok");
 	resolveRoundLimit(s, "planning", "x", "continue");
 	assert.equal(JSON.stringify(s), frozen);
 });
@@ -157,7 +197,9 @@ test("a whole workflow: planning loop, confirmation, development loop, done", ()
 	step = transition(step.state, ret("misses an edge case")); // → developer, round 2
 	assert.equal(step.state.round.development, 2);
 	step = transition(step.state, advance("fixed")); // → code-reviewer
-	step = transition(step.state, advance("approved")); // end
+	step = transition(step.state, advance("approved")); // → code confirmation
+	assert.deepEqual(step.next, { type: "confirm-code", note: "approved" });
+	step = resolveCodeConfirmation(step.state, { kind: "finish" }, "approved"); // end
 	assert.deepEqual(step.next, { type: "end", outcome: "finished", note: "approved" });
 	assert.deepEqual(step.state.round, { planning: 2, development: 2 });
 });

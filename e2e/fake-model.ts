@@ -88,8 +88,9 @@ function brain(context: TranscriptContext) {
 	const round = Number(roundText);
 	// Every briefing in a request belongs to one agent; only its first one names the plan file.
 	const planPath = /`(\/[^`]*plan\.md)`/.exec(text(briefings[0].m))?.[1] ?? "";
-	// A re-activation message is the title line, a blank line, then `Returned from <label>: …`. The first-time briefing
-	// has that phrase only inside its rules text, so the test is anchored at the start of the message.
+	// A re-activation message is the title line, a blank line, then `Returned from <label>: …` (`<label>` is
+	// `the user` when the user's comments are passed on). The first-time briefing has that phrase only inside
+	// its rules text, so the test is anchored at the start of the message.
 	const returned = /^# .*\n\nReturned from [^:\n]+: ([\s\S]*)$/.exec(body);
 	const runDir = dirname(planPath);
 	const repo = dirname(dirname(dirname(runDir)));
@@ -148,6 +149,12 @@ function brain(context: TranscriptContext) {
 			if (turns === 1) return call(fauxToolCall("advance", { summary: "implemented hello.txt" }));
 			break;
 		case "Code reviewer":
+			// The user's comments (the title line, `Returned from the user: <comments>`, the instruction):
+			// the first line of the comments is checked and returned.
+			if (returned !== null) {
+				if (turns === 0) return call(fauxToolCall("return", { feedback: `the user's comment holds: ${returned[1].split("\n")[0]}` }));
+				break;
+			}
 			if (turns === 0) {
 				return call(
 					round < CODE_APPROVE_ROUND

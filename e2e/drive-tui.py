@@ -13,10 +13,12 @@ node_modules. The fake-model scenarios run pi with their own empty agent directo
 on your pi config; `real` keeps your agent directory, because it needs your credentials.
 
 Scenarios (default: all)
-    full        /dev (no model request until your first message) → Planner ⇄ Plan reviewer → confirmation (edit, approve)
-                → Developer ⇄ Code reviewer → done; an agent activated again sees its own earlier conversation, nothing of another agent's
+    full        /dev (no model request until your first message) → Planner ⇄ Plan reviewer → confirmation (Esc asks again, edit, approve)
+                → Developer ⇄ Code reviewer → code confirmation (Esc asks again, comments go to the Code reviewer, which returns to the
+                Developer; the next approval → Finish workflow) → done; an agent activated again sees its own earlier conversation,
+                nothing of another agent's
     stop        /dev while the Planner waits for your first message → Cancel / Stop; Stop from the plan confirmation
-    limit       planning round limit: Continue, Accept as is, send back, Stop
+    limit       planning round limit: Esc asks again, Continue, Accept as is, send back, Stop
     abort       Esc interrupts the turn only; /dev → Stop while an agent is running aborts it, then ends the workflow
     real        (opt-in, costs a few cents) the same flow with a real model: E2E_REAL_MODEL, default github-copilot/claude-haiku-5.5
     resume      quit pi mid-workflow (after the first message), restart with --continue → state, bar and tools restored
@@ -306,6 +308,11 @@ def full():
     check("the bar's top row shows the active agent's context: `agent ctx …/128k`", rows and "agent ctx" in rows[0] and "/128k" in rows[0], rows)
     check("…and the middle row the workflow's cost: `workflow no price` (the fake model has no prices)", rows and "workflow no price" in rows[1], rows)
 
+    # Esc dismisses the dialog; it is asked again, however often (three dismissals in a row used to count as Stop)
+    for _ in range(3):
+        t.send("\x1b", 1.0)
+    s = t.text()
+    check("Esc on the plan confirmation (three times) asks it again and does not stop the workflow", "Confirm the plan" in s and "Workflow stopped" not in s, s[-800:])
     # Edit plan… (2nd option) → editor → append text → Enter → asked again → Approve
     t.send(DOWN)
     t.send(ENTER, 1.0)
@@ -317,8 +324,40 @@ def full():
     check("…and the confirmation is asked again", t.wait("Confirm the plan", 5))
     t.send(ENTER, 1.0)  # Approve and start development
 
-    ok = t.wait("Workflow finished", 60)
-    check("Developer ⇄ Code reviewer ran and the workflow finished", ok)
+    ok = t.wait("Code review passed", 60)
+    check("Developer ⇄ Code reviewer ran and the code confirmation opened", ok)
+    if not ok:
+        print(t.text()[-3000:])
+        t.close()
+        return
+    s = t.text()
+    t.dump("confirm-code")
+    dialog = s[s.rfind("Code review passed"):]
+    check("the dialog shows the Code reviewer's approval note and its two options", "code approved: matches the plan" in dialog and "Finish workflow" in dialog and "Send comments to Code reviewer…" in dialog, dialog)
+    check("…and no `Stop workflow` option", "Stop workflow" not in dialog, dialog)
+    check("the bar shows Development round 2/3 with the Code reviewer active", bar_has(s, "Development · round 2/3") and "▶ Code reviewer" in s)
+    for _ in range(3):
+        t.send("\x1b", 1.0)
+    s = t.text()
+    check("Esc on the code confirmation (three times) asks it again and does not end the workflow", "Code review passed" in s and "Workflow finished" not in s and "Workflow stopped" not in s, s[-800:])
+    t.send(DOWN)
+    t.send(ENTER, 1.0)  # Send comments to Code reviewer…
+    check("'Send comments…' opens an editor for the Code reviewer's comments", t.wait("Comments for the Code reviewer", 5))
+    t.send(ENTER, 1.0)  # nothing written
+    s = t.text()
+    check("empty comments ask the dialog again", "Code review passed" in s.split("Comments for the Code reviewer")[-1], s[-800:])
+    t.send(DOWN)
+    t.send(ENTER, 1.0)
+    t.wait("Comments for the Code reviewer", 5)
+    t.send("check the empty case", 0.5)
+    t.send(ENTER, 1.0)
+    ok = t.wait("Development · Developer · round 3/3", 60)
+    check("the Code reviewer checked the comments, returned to the Developer, and development round 3/3 started", ok, t.text()[-1500:])
+    ok = t.wait("Code review passed", 60) and t.text().count("Code review passed") >= 1 and "▶ Development · Code reviewer · round 3/3" in t.text()
+    check("the Developer's next hand-over, the Code reviewer's approval and the code confirmation came back", ok, t.text()[-1500:])
+    t.send(ENTER, 1.0)  # Finish workflow
+    ok = t.wait("Workflow finished", 30)
+    check("Finish workflow ends the workflow", ok)
     t.pump(2)
     s = t.text()
     t.dump("final")
@@ -326,8 +365,11 @@ def full():
         print(s[-3000:])
     check("banner: ✓ Workflow finished, with the Code reviewer's note", "✓ Workflow finished" in s and "code approved: matches the plan" in s)
     check("banners for the development stage",
-          all(x in s for x in ["▶ Development · Developer · round 1/3", "▶ Development · Code reviewer · round 1/3", "▶ Development · Developer · round 2/3", "▶ Development · Code reviewer · round 2/3"]))
+          all(x in s for x in ["▶ Development · Developer · round 1/3", "▶ Development · Code reviewer · round 1/3", "▶ Development · Developer · round 2/3", "▶ Development · Code reviewer · round 2/3", "▶ Development · Developer · round 3/3", "▶ Development · Code reviewer · round 3/3"])
+          and s.count("▶ Development · Code reviewer · round 2/3") == 2)
+    check("the Code reviewer's second round-2 banner shows the user's comments", "Returned from the user: check the empty case" in s)
     check("everything is still on screen after the end (assignment, reviewer feedback)", "a hello file" in s and "add a second line to hello.txt" in s)
+    check("the Code reviewer's return after the comments is on screen", "the user's comment holds: check the empty case" in s)
     t.send("\x0f", 1.0)  # Ctrl+O: expand
     s_open = t.text()
     t.dump("expanded")
@@ -344,9 +386,9 @@ def full():
     check("the figures went with the bar: no `agent ctx` and no `workflow …` below the banner", "agent ctx" not in tail and "workflow no price" not in tail, tail)
 
     reqs = t.agent_requests()
-    expected = ["planner#1", "plan-reviewer#1", "planner#2", "plan-reviewer#2", "developer#1", "code-reviewer#1", "developer#2", "code-reviewer#2"]
-    check("agents ran in the expected order", activations(reqs) == expected, activations(reqs))
-    check("13 requests in total — none after the final hand-off", len(reqs) == 13, f"got {len(reqs)}")
+    expected = ["planner#1", "plan-reviewer#1", "planner#2", "plan-reviewer#2", "developer#1", "code-reviewer#1", "developer#2", "code-reviewer#2", "developer#3", "code-reviewer#3"]
+    check("agents ran in the expected order (the Code reviewer's turn on the user's comments is still round 2)", activations(reqs) == expected, activations(reqs))
+    check("17 requests in total — none after the final hand-off", len(reqs) == 17, f"got {len(reqs)}")
     first_of = {}
     for r in reqs:
         first_of.setdefault(tag(r), r)
@@ -358,9 +400,12 @@ def full():
         """The titles of an agent's briefings up to round k, as the key `<agent>#k` names them: `plan-reviewer#2` → rounds 1 and 2."""
         agent, k = key.split("#")
         stage = "Planning" if agent in ("planner", "plan-reviewer") else "Development"
-        return [f"# {stage} · {agent.replace('-', ' ').capitalize()} · round {i}/3" for i in range(1, int(k) + 1)]
+        titles = [f"# {stage} · {agent.replace('-', ' ').capitalize()} · round {i}/3" for i in range(1, int(k) + 1)]
+        if agent == "code-reviewer" and int(k) >= 3:
+            titles.insert(2, titles[1])  # the user's comments activated the Code reviewer again in round 2
+        return titles
 
-    check("an activation's first request carries exactly its own agent's briefings, rounds 1…k in order, and starts with the round-1 briefing",
+    check("an activation's first request carries exactly its own agent's briefings, rounds 1…k in order (the user's comments add one more for the Code reviewer), and starts with the round-1 briefing",
           all(r["briefings"] == own_titles(k) and r["conversation"][0].startswith("user:" + own_titles(k)[0]) for k, r in first_of.items()),
           {k: r["briefings"] for k, r in first_of.items()})
     joined = {k: "\n".join(r["conversation"]) for k, r in first_of.items()}
@@ -372,8 +417,13 @@ def full():
     check("the returned Developer sees its own `write` only (the Planner's plan writes are hidden) and no `return` of the reviewer",
           joined["developer#2"].count("<call write>") == 1 and "<call return>" not in joined["developer#2"], first_of["developer#2"]["conversation"])
 
+    commented = [r for r in reqs if tag(r) == "code-reviewer#2"][-1]
+    joined_c = "\n".join(commented["conversation"])
+    check("on the user's comments the Code reviewer sees its own earlier conversation, with three briefings, and nothing of the Developer's",
+          len(commented["briefings"]) == 3 and "<call return>" in joined_c and "<call write>" not in joined_c and "return" in commented["tools"], commented)
+
     briefings = t.briefings()
-    check("8 briefings were recorded", len(briefings) == 8, len(briefings))
+    check("11 briefings were recorded", len(briefings) == 11, len(briefings))
     reviewer = next(b for b in briefings if b.startswith("# Planning · Plan reviewer · round 1"))
     check("the Plan reviewer's briefing has the Planner's summary and no assignment text", "plan ready" in reviewer and "a hello file" not in reviewer)
     conversation = open(t.repo + "/.pi/dev/0001/conversation.md").read() if os.path.exists(t.repo + "/.pi/dev/0001/conversation.md") else ""
@@ -391,8 +441,16 @@ def full():
         "# Development · Code reviewer · round 2/3\n\nHanded over from Developer: implemented hello.txt",
     ]:
         title = message.split("\n")[0]
-        got = [b for b in briefings if b.startswith(title)]
+        got = [b for b in briefings if b.startswith(message.split(":")[0])]
         check(f"{title[2:]}: the message is the title line and the news, nothing else", got == [message], got)
+    instruction = (
+        "Check each comment in the code. If it is valid, `return` to the Developer with concrete, actionable feedback. If it is not valid, "
+        "or it is unclear, say so or ask the user. `advance` only when no issue is open."
+    )  # a literal on purpose: not imported from the prompts
+    check("# Development · Code reviewer · round 2/3: the user's comments, then the instruction",
+          f"# Development · Code reviewer · round 2/3\n\nReturned from the user: check the empty case\n\n{instruction}" in briefings, [b[:80] for b in briefings])
+    check("# Development · Developer · round 3/3: the Code reviewer's feedback on the user's comments",
+          "# Development · Developer · round 3/3\n\nReturned from Code reviewer: the user's comment holds: check the empty case" in briefings, [b[:80] for b in briefings])
 
     t.type_line("what do you see?")
     ok = t.wait("I see 2 message(s)", 30)
@@ -466,6 +524,11 @@ def limit():
     check("…the bar showed round 3/3", bar_has(s, "Planning · round 3/3"))
     check("…three Planner briefings and three reviews happened",
           activations(t.agent_requests()) == ["planner#1", "plan-reviewer#1", "planner#2", "plan-reviewer#2", "planner#3", "plan-reviewer#3"], activations(t.agent_requests()))
+    n = len(t.agent_requests())
+    for _ in range(3):
+        t.send("\x1b", 1.0)
+    s = t.text()
+    check("Esc on the round-limit dialog (three times) asks it again and does not stop the workflow", "Round limit reached" in s and "Workflow stopped" not in s and len(t.agent_requests()) == n, s[-800:])
     t.send(ENTER, 1.0)  # Continue (one more round)
     ok = t.wait("Planning: 4 round(s) without approval", 60)
     s = t.text()
@@ -480,7 +543,7 @@ def limit():
     check("'Send back…' asks for comments", t.wait("Comments for the Planner", 5))
     t.send("please simplify", 0.5)
     t.send(ENTER, 1.0)
-    ok = t.wait("Planning: 4 round(s) without approval", 60)  # the first one was dismissed, so this is the second
+    ok = t.wait("Planning: 4 round(s) without approval", 60)  # the dialog comes back after the Planner's revision and the reviewer's return
     check("…the Planner revised and the reviewer's next return opens the limit dialog again", ok)
     briefings = t.briefings()
     fixed = "The plan file may have been edited by the user since you wrote it; read it before you change it."  # a literal on purpose: not imported from briefings.ts
@@ -563,6 +626,9 @@ def real():
             t.dump("confirm")
             t.send(ENTER, 2.0)  # Approve and start development
             quiet = 0
+            continue
+        if "Code review passed" in s:
+            t.send(ENTER, 2.0)  # Finish workflow
             continue
         if "Round limit reached" in s:
             t.send(ENTER, 2.0)  # Continue

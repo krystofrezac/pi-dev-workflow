@@ -38,6 +38,7 @@ import { type ConversationEntry, planningConversation } from "./conversation.ts"
 import { allocateRunDir, conversationPath, gitBaseline, planPath, planProblem } from "./files.ts";
 import {
 	AGENT_LABEL,
+	type CodeChoice,
 	type Feedback,
 	type HandOff,
 	initialState,
@@ -47,6 +48,7 @@ import {
 	type Outcome,
 	type PlanChoice,
 	parseState,
+	resolveCodeConfirmation,
 	resolvePlanConfirmation,
 	resolveRoundLimit,
 	STAGE_LABEL,
@@ -68,14 +70,14 @@ const APPROVE = "Approve and start development";
 const EDIT_PLAN = "Edit plan…";
 const SEND_BACK = "Send back to Planner…";
 const STOP = "Stop workflow";
+const FINISH = "Finish workflow";
+const SEND_COMMENTS = "Send comments to Code reviewer…";
 const CONTINUE = "Continue (one more round)";
 const ACCEPT = "Accept as is";
 
 /** Shown after /dev: the Planner makes no request until the user writes their first message. */
 const READY_HINT = "Planner is ready — describe what you want to build.";
 
-/** A dialog dismissed this many times in a row (Esc) counts as "stop", so nothing can spin forever. */
-const MAX_DISMISSALS = 3;
 /** Keep dialog titles short: the full text is already on screen in the hand-over call. */
 const PREVIEW_CHARS = 300;
 
@@ -282,13 +284,12 @@ export default function devWorkflow(pi: ExtensionAPI): void {
 
 	// ───────────────────────────── dialogs ─────────────────────────────
 
-	/** `select` that re-asks when dismissed; `undefined` after `MAX_DISMISSALS` dismissals in a row. */
-	async function ask(ctx: ExtensionContext, title: string, options: string[]): Promise<string | undefined> {
-		for (let i = 0; i < MAX_DISMISSALS; i++) {
+	/** `select` that re-asks until an option is chosen, however often it is dismissed. */
+	async function ask(ctx: ExtensionContext, title: string, options: string[]): Promise<string> {
+		for (;;) {
 			const choice = await ctx.ui.select(title, options);
 			if (choice !== undefined) return choice;
 		}
-		return undefined;
 	}
 
 	async function askPlan(ctx: ExtensionContext, s: WorkflowState, next: Extract<Next, { type: "confirm-plan" }>): Promise<PlanChoice> {
@@ -310,21 +311,38 @@ export default function devWorkflow(pi: ExtensionAPI): void {
 					if (comments) return { kind: "send-back", comments };
 					continue; // nothing written → ask again
 				}
-				default:
+				case STOP:
 					return { kind: "stop" };
+			}
+		}
+	}
+
+	async function askCode(ctx: ExtensionContext, next: Extract<Next, { type: "confirm-code" }>): Promise<CodeChoice> {
+		const title = `Code review passed\n\nThe Code reviewer approved the work: ${preview(next.note)}`;
+		for (;;) {
+			switch (await ask(ctx, title, [FINISH, SEND_COMMENTS])) {
+				case FINISH:
+					return { kind: "finish" };
+				case SEND_COMMENTS: {
+					const comments = (await ctx.ui.editor("Comments for the Code reviewer", ""))?.trim();
+					if (comments) return { kind: "comment", comments };
+					continue; // nothing written → ask again
+				}
 			}
 		}
 	}
 
 	async function askLimit(ctx: ExtensionContext, s: WorkflowState, stage: Stage, feedback: string): Promise<LimitChoice> {
 		const title = `Round limit reached — ${STAGE_LABEL[stage]}: ${s.round[stage]} round(s) without approval\nLast feedback: ${preview(feedback)}`;
-		switch (await ask(ctx, title, [CONTINUE, ACCEPT, STOP])) {
-			case CONTINUE:
-				return "continue";
-			case ACCEPT:
-				return "accept";
-			default:
-				return "stop";
+		for (;;) {
+			switch (await ask(ctx, title, [CONTINUE, ACCEPT, STOP])) {
+				case CONTINUE:
+					return "continue";
+				case ACCEPT:
+					return "accept";
+				case STOP:
+					return "stop";
+			}
 		}
 	}
 
@@ -339,6 +357,9 @@ export default function devWorkflow(pi: ExtensionAPI): void {
 					return step;
 				case "confirm-plan":
 					step = resolvePlanConfirmation(step.state, await askPlan(ctx, step.state, next));
+					break;
+				case "confirm-code":
+					step = resolveCodeConfirmation(step.state, await askCode(ctx, next), next.note);
 					break;
 				case "round-limit":
 					step = resolveRoundLimit(step.state, next.stage, next.feedback, await askLimit(ctx, step.state, next.stage, next.feedback));

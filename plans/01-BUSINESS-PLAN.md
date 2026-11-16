@@ -62,8 +62,10 @@ Planner asks follow-up questions in the same chat.
 
    It either calls `advance` (approves) or `return` (sends the work back to the Developer with
    concrete feedback). The Developer fixes it, calls `advance` again, and the loop repeats.
-3. **Done.** When the Code reviewer calls `advance`, the workflow ends. There is no
-   confirmation step from you here — you review the final result yourself, as you would any finished work.
+3. **Done.** When the Code reviewer calls `advance`, you are asked to confirm: finish the
+   workflow, or send comments to the Code reviewer. The Code reviewer checks your comments in the
+   code and, where they hold, returns the work to the Developer with concrete feedback; if it
+   approves again, you are asked again.
 
 The Code reviewer can only send work back to the Developer. It never reopens Planning; if it
 believes the plan itself is wrong, it says so in its feedback and you decide what to do.
@@ -103,7 +105,8 @@ believes the plan itself is wrong, it says so in its feedback and you decide wha
 A **round** is one hand-over to a reviewer and the reviewer's answer. Each stage counts its own
 rounds. After **3 rounds** without approval, the workflow stops and asks you what to do:
 let the loop continue for **one more round**, accept the current result as it is, or stop the
-workflow. Changes you request at the plan confirmation do not count as a round.
+workflow. Changes you request at the plan confirmation, and comments you send to the Code reviewer
+at the final confirmation, do not count as a round.
 
 ## What you see
 
