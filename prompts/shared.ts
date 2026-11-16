@@ -16,6 +16,8 @@ export interface BriefingInput {
 	summary?: string;
 	/** Work coming back to an author. */
 	feedback?: Feedback;
+	/** Absolute path of conversation.md: the Plan reviewer's first briefing or resumed message, only when the file was written. */
+	conversationPath?: string;
 	/** Where the tree stood when development started. */
 	baseline?: Baseline;
 	/** True when this agent has been briefed before in this workflow: the message is the short one. */

@@ -59,7 +59,7 @@ function stateId(entry: UsageEntry): string | null | undefined {
  * newest `dev-state` entry with this id, then back through the run of same-id `dev-state` entries before it. The first
  * `dev-state` entry that is a "no workflow" marker, names another id or is unreadable ends the walk.
  */
-function startOf(entries: readonly UsageEntry[], workflowId: string): number {
+export function startOf(entries: readonly UsageEntry[], workflowId: string): number {
 	let start = -1;
 	let i = entries.length - 1;
 	for (; i >= 0; i--) {

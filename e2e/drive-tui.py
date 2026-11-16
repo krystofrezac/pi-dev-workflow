@@ -376,19 +376,23 @@ def full():
     check("8 briefings were recorded", len(briefings) == 8, len(briefings))
     reviewer = next(b for b in briefings if b.startswith("# Planning · Plan reviewer · round 1"))
     check("the Plan reviewer's briefing has the Planner's summary and no assignment text", "plan ready" in reviewer and "a hello file" not in reviewer)
+    conversation = open(t.repo + "/.pi/dev/0001/conversation.md").read() if os.path.exists(t.repo + "/.pi/dev/0001/conversation.md") else ""
+    check("the run folder holds conversation.md with the user's first message, and the Plan reviewer's briefing names it",
+          "a hello file" in conversation and "/.pi/dev/0001/conversation.md" in reviewer, conversation[:300])
     developer = next(b for b in briefings if b.startswith("# Development · Developer · round 1"))
     check("the Developer's briefing carries the git baseline", re.search(r"Baseline commit: `[0-9a-f]{40}`", developer) is not None, developer[-600:])
     code = next(b for b in briefings if b.startswith("# Development · Code reviewer · round 1"))
     check("the Code reviewer's first briefing has the Developer's summary and the diff command", "implemented hello.txt" in code and "git diff " in code)
     for message in [
         "# Planning · Planner · round 2/3\n\nReturned from Plan reviewer: add the word REVIEWED to the plan",
-        "# Planning · Plan reviewer · round 2/3\n\nHanded over from Planner: plan revised",
+        "# Planning · Plan reviewer · round 2/3\n\nHanded over from Planner: plan revised\n\n"
+        f"The conversation between the user and the Planner was refreshed; read it again: `{t.repo}/.pi/dev/0001/conversation.md`",
         "# Development · Developer · round 2/3\n\nReturned from Code reviewer: add a second line to hello.txt",
         "# Development · Code reviewer · round 2/3\n\nHanded over from Developer: implemented hello.txt",
     ]:
         title = message.split("\n")[0]
         got = [b for b in briefings if b.startswith(title)]
-        check(f"{title[2:]}: the message is the title line and one sentence, nothing else", got == [message], got)
+        check(f"{title[2:]}: the message is the title line and the news, nothing else", got == [message], got)
 
     t.type_line("what do you see?")
     ok = t.wait("I see 2 message(s)", 30)
@@ -636,8 +640,8 @@ def resume():
 def compaction():
     print("━━ compaction ━━")
     # Per-agent compaction. Window 20000 tokens, reserve 11990, so an agent is compacted when its context passes 8010;
-    # `keepRecentTokens` is 200, so the cut falls at the Planner's big `write`. The plan carries 20000 chars of padding
-    # (~5k tokens), so the Planner's own answers report ~7995 (the padded `write`) and ~8028 (`advance`), the faux
+    # `keepRecentTokens` is 200, so the cut falls at the Planner's big `write`. The plan carries 19800 chars of padding
+    # (~5k tokens), so the Planner's own answers report ~7985 (the padded `write`) and ~8080 (`advance`), the faux
     # provider counting the prompt plus the output. The Plan reviewer returns once, so the Planner runs twice.
     # Expected sequence:
     #  (a) Planner, round 1. The `write` answer is below the threshold; the `advance` answer is above it, so at the hand-off
@@ -655,7 +659,7 @@ def compaction():
     # So: two `dev-summary` messages and three summarisation requests. pi's own `Auto-compaction cancelled` lines are on
     # screen and not checked.
     reserve = int(os.environ.get("E2E_RESERVE", "11990"))
-    t = Tui("compaction", env={"E2E_CONTEXT_WINDOW": "20000", "E2E_PAD": "20000", "E2E_NO_COMBO": "1"},
+    t = Tui("compaction", env={"E2E_CONTEXT_WINDOW": "20000", "E2E_PAD": "19800", "E2E_NO_COMBO": "1"},
             settings={"compaction": {"enabled": True, "reserveTokens": reserve, "keepRecentTokens": 200}})
     t.type_line("/dev")
     t.wait(BANNER, 30)

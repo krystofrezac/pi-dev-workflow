@@ -56,14 +56,18 @@ test("Planner, first round: starts from the user's first message, no greeting; m
 	assert.match(text, /How to start/);
 	assert.doesNotMatch(text, /Greet the user/);
 	assert.doesNotMatch(text, /\*\*wait\*\*/);
-	for (const heading of ["## Assignment", "## Questions and answers", "## Scope", "## Design", "## Requirements", "## How to verify"])
+	for (const heading of ["## Assignment", "## Scope", "## Design", "## Requirements", "## How to verify"])
 		assert.ok(text.includes(heading), heading);
-	assert.match(text, /verbatim/);
+	assert.ok(!text.includes("## Questions and answers"), "no Questions and answers section");
+	assert.doesNotMatch(text, /verbatim/);
+	assert.match(text, /brief, high-level description, in your own words/);
+	assert.match(text, /reads the chat with the user and the plan/);
+	assert.match(text, /has no `Scope` section/);
 	assert.match(text, /do not change any project file other than the plan/);
 	assert.match(text, /No code/);
 	assert.doesNotMatch(text, /\*\*Out\*\*/);
 	assert.match(text, /Say it once/);
-	const headings = ["## Assignment", "## Questions and answers", "## Scope", "## Design", "## Requirements", "## How to verify"];
+	const headings = ["## Assignment", "## Scope", "## Design", "## Requirements", "## How to verify"];
 	const positions = headings.map((heading) => text.indexOf(heading));
 	assert.deepEqual(
 		positions,
@@ -75,16 +79,34 @@ test("Planner, first round: starts from the user's first message, no greeting; m
 	assert.match(text, /If nothing in the plan is testable, replace the list with one line saying so/);
 });
 
-test("Plan reviewer: gets the plan and the summary; the plan's Assignment and Questions and answers are the request and what was settled; may ask the user", () => {
-	const text = buildBriefing(base({ agent: "plan-reviewer", summary: "plan covers X and Y" }));
+test("Plan reviewer: gets the plan, the summary and the conversation file; judges the plan against the conversation; may ask the user", () => {
+	const text = buildBriefing(
+		base({ agent: "plan-reviewer", summary: "plan covers X and Y", conversationPath: "/p/.pi/dev/0001/conversation.md" }),
+	);
 	assert.match(text, /plan covers X and Y/);
-	assert.match(text, /Questions and answers/);
-	assert.match(text, /original request verbatim/);
+	assert.match(text, /conversation between the user and the Planner is in `\/p\/\.pi\/dev\/0001\/conversation\.md`\. Read it first/);
+	assert.doesNotMatch(text, /Questions and answers/);
+	assert.doesNotMatch(text, /verbatim/);
+	assert.doesNotMatch(text, /No conversation file is available/);
 	assert.match(text, /ask them directly/);
+	assert.match(text, /Do not re-ask the user what the conversation settled/);
 	assert.match(text, /do not fix/);
 	assert.match(text, /covered by the `Requirements`/);
 	assert.match(text, /list of tests to add/);
-	assert.match(text, /Scope.*Assignment.*Questions and answers.*Completeness.*Concreteness.*Decisions.*Verification.*Readability/s);
+	assert.match(text, /Scope.*Assignment.*Decisions.*Completeness.*Concreteness.*Verification.*Readability/s);
+});
+
+test("Plan reviewer without a conversation file: says none is available and does not name a path", () => {
+	const text = buildBriefing(base({ agent: "plan-reviewer", summary: "plan ready" }));
+	assert.match(text, /No conversation file is available/);
+	assert.doesNotMatch(text, /conversation\.md/);
+	assert.match(text, /ask the user/);
+});
+
+test("only the Plan reviewer is given the conversation path", () => {
+	for (const agent of ["planner", "developer", "code-reviewer"] as const) {
+		assert.doesNotMatch(buildBriefing(base({ agent })), /conversation\.md|conversation file/, agent);
+	}
 });
 
 test("Developer: implement the plan, run checks, git baseline (clean / dirty / none)", () => {
@@ -167,6 +189,15 @@ test("Plan reviewer handed the plan again: the title line and one sentence, noth
 	assert.equal(text, "# Planning · Plan reviewer · round 2/3\n\nHanded over from Planner: plan revised");
 	for (const part of NOT_A_BRIEFING) assert.ok(!text.includes(part), part);
 	assert.doesNotMatch(text, /may have been edited by the user/);
+});
+
+test("Plan reviewer handed the plan again: the line about the refreshed conversation file only when a path is given", () => {
+	const path = "/p/.pi/dev/0001/conversation.md";
+	assert.equal(
+		buildBriefing(base({ agent: "plan-reviewer", round: 2, resumed: true, summary: "plan revised", conversationPath: path })),
+		`# Planning · Plan reviewer · round 2/3\n\nHanded over from Planner: plan revised\n\nThe conversation between the user and the Planner was refreshed; read it again: \`${path}\``,
+	);
+	assert.doesNotMatch(buildBriefing(base({ agent: "plan-reviewer", round: 2, resumed: true, summary: "plan revised" })), /conversation/);
 });
 
 test("Code reviewer handed the work again: the title line and one sentence, nothing else", () => {

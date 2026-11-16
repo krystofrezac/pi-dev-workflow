@@ -15,5 +15,7 @@ export function continuation(input: BriefingInput): string {
 	const { feedback } = input;
 	if (feedback?.from === "user") return `${title}\n\nReturned from the user: ${feedback.text}\n\n${PLAN_EDITED_NOTE}`;
 	if (feedback) return `${title}\n\nReturned from ${AGENT_LABEL[reviewerOf(stageOf(input.agent))]}: ${feedback.text}`;
-	return `${title}\n\nHanded over from ${AGENT_LABEL[authorOf(stageOf(input.agent))]}: ${input.summary ?? "(none)"}`;
+	const handedOver = `${title}\n\nHanded over from ${AGENT_LABEL[authorOf(stageOf(input.agent))]}: ${input.summary ?? "(none)"}`;
+	if (!input.conversationPath) return handedOver;
+	return `${handedOver}\n\nThe conversation between the user and the Planner was refreshed; read it again: \`${input.conversationPath}\``;
 }

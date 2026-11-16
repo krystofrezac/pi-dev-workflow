@@ -17,7 +17,7 @@ export const END_TYPE = "dev-end";
 const MARKERS: ReadonlySet<string> = new Set([BRIEFING_TYPE, SUMMARY_TYPE, END_TYPE]);
 
 /** The agent a briefing or summary was written for: `details.agent` of the custom message, when it is a non-empty string. */
-function markerAgent(details: unknown): string | undefined {
+export function markerAgent(details: unknown): string | undefined {
 	const agent = (details as { agent?: unknown } | null | undefined)?.agent;
 	return typeof agent === "string" && agent !== "" ? agent : undefined;
 }

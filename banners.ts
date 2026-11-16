@@ -18,6 +18,8 @@ export interface BriefingDetails {
 	agent: Agent;
 	round: number;
 	roundLimit: number;
+	/** The user's comment text, when the briefing hands the plan back to the Planner with the user's feedback. */
+	userFeedback?: string;
 }
 
 /** What a whole workflow cost, and whether that should read "no price". */

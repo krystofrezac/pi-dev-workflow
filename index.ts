@@ -34,7 +34,8 @@ import { type BarUsage, createBar, themeStyle } from "./bar.ts";
 import { buildBriefing } from "./briefings.ts";
 import { agentView, collectFileOps, compactionSettings, planCompaction, summaryMessage, type ViewMessage } from "./compaction.ts";
 import { BRIEFING_TYPE, briefedBefore, END_TYPE, type EntryLike, visibleMessages } from "./context.ts";
-import { allocateRunDir, gitBaseline, planPath, planProblem } from "./files.ts";
+import { type ConversationEntry, planningConversation } from "./conversation.ts";
+import { allocateRunDir, conversationPath, gitBaseline, planPath, planProblem } from "./files.ts";
 import {
 	AGENT_LABEL,
 	type Feedback,
@@ -166,12 +167,17 @@ export default function devWorkflow(pi: ExtensionAPI): void {
 	// ───────────────────────────── messages ─────────────────────────────
 
 	/** `resumed`: the agent has been briefed before in this workflow, so its message is the short one. */
-	function briefingMessage(s: WorkflowState, extra: { summary?: string; feedback?: Feedback }, resumed: boolean) {
+	function briefingMessage(
+		s: WorkflowState,
+		extra: { summary?: string; feedback?: Feedback; conversationPath?: string },
+		resumed: boolean,
+	) {
 		const stage = stageOf(s.agent);
-		const details: BriefingDetails = { agent: s.agent, round: s.round[stage], roundLimit: s.roundLimit[stage] };
+		const round = { agent: s.agent, round: s.round[stage], roundLimit: s.roundLimit[stage] };
+		const details: BriefingDetails = { ...round, ...(extra.feedback?.from === "user" ? { userFeedback: extra.feedback.text } : {}) };
 		return {
 			customType: BRIEFING_TYPE,
-			content: buildBriefing({ ...details, planPath: planPath(s.dir), baseline: s.baseline, ...extra, resumed }),
+			content: buildBriefing({ ...round, planPath: planPath(s.dir), baseline: s.baseline, ...extra, resumed }),
 			display: true,
 			details,
 		};
@@ -474,13 +480,30 @@ export default function devWorkflow(pi: ExtensionAPI): void {
 		usage = usage && { ...usage, context: undefined }; // the previous agent's figure is gone at once
 		pi.setActiveTools(toolsFor(entering));
 		refreshBar();
+		// The Plan reviewer reads the planning conversation: the Planner's last message and hand-over are in the branch.
+		let conversation: string | undefined;
+		if (entering.agent === "plan-reviewer") {
+			const file = conversationPath(entering.dir);
+			try {
+				writeFileSync(file, planningConversation(ctx.sessionManager.getBranch() as ConversationEntry[], entering.id));
+				conversation = file;
+			} catch (error) {
+				ctx.ui.notify(
+					`Could not write the conversation file for the Plan reviewer: ${error instanceof Error ? error.message : String(error)}`,
+					"warning",
+				);
+			}
+		}
 		// "Briefed before" is read from the session, so it is right after `/resume`, `/reload` and `/tree`. The new
 		// briefing is not in the branch yet.
 		const resumed = briefedBefore(ctx.sessionManager.getBranch() as EntryLike[], entering.agent);
 		const entries: SessionBoundaryDraft[] = [
 			...(compacted ? [compacted.draft] : []),
 			{ type: "custom", customType: STATE_ENTRY, data: entering },
-			{ type: "custom_message", ...briefingMessage(entering, { summary: next.summary, feedback: next.feedback }, resumed) },
+			{
+				type: "custom_message",
+				...briefingMessage(entering, { summary: next.summary, feedback: next.feedback, conversationPath: conversation }, resumed),
+			},
 		];
 		return { entries, continue: true };
 	});

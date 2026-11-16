@@ -145,17 +145,13 @@ banner, collapsed by default; expandable to read the text).
 
 | Agent | Briefing includes |
 |---|---|
-| Planner | Mission and plan format (mandatory sections: Assignment — the user's request, quoted where possible — **Scope** — in / out / decisions made with the user — Steps, How to verify). Plan file path. On a later round: the Plan reviewer's feedback, or your comments from the confirmation dialog; the plan on disk is the current draft. |
-| Plan reviewer | Checklist from the business plan. The plan path and the Planner's `summary`. It does **not** get your original assignment: it judges the plan against what the plan says you asked for, and is told to ask you in the chat when something looks added or missing. |
+| Planner | Mission and plan format (mandatory sections: Assignment — a brief, high-level description in the Planner's own words — **Scope** — in / decisions made with the user — Design, Requirements, How to verify). Plan file path. On a later round: the Plan reviewer's feedback, or your comments from the confirmation dialog; the plan on disk is the current draft. |
+| Plan reviewer | Checklist from the business plan. The plan path, the Planner's `summary` and the path of `conversation.md` (§8): it reads that first and judges the plan against what you and the Planner said, and is told to ask you in the chat when something looks added or missing. When the file could not be written it is told so. On a later round its "Handed over from Planner" message says the file was refreshed. |
 | Developer | Mission: implement the plan, run the project's tests/checks, don't add anything outside the plan. Plan path, git baseline (§8). On a later round: the Code reviewer's feedback. |
 | Code reviewer | Checklist: scope (done and nothing extra), correctness (tests/checks pass — may run them), code quality. Plan path, the Developer's `summary`, git baseline to diff against. |
 
 A fresh agent on a return round gets no memory of its earlier attempt; the work is on disk (plan file, working tree)
 and the feedback is in the briefing (decision from the business plan; keeping the author's context is in `TODO.md`).
-
-**Known weakness.** Since the Plan reviewer never sees the original assignment, a plan whose *Assignment* section
-has drifted from what you said can pass review unless you notice, or the reviewer asks you. The plan confirmation
-dialog is the backstop. Fixing this is in `TODO.md`.
 
 ## 8. Files on disk
 
@@ -164,6 +160,7 @@ dialog is the backstop. Fixing this is in `TODO.md`.
 | File | Written by | Purpose |
 |---|---|---|
 | `plan.md` | Planner (you may edit) | The plan; read by everyone downstream |
+| `conversation.md` | the extension | What you and the Planner said (your messages, the Planner's text, your plan-confirmation comments; no thinking, tool calls or tool results, nothing of the Plan reviewer). Rewritten from the session record each time the Plan reviewer is activated; read by the Plan reviewer only |
 
 Git baseline: when development starts, record `HEAD` and whether the tree was dirty (via `pi.exec("git", …)`); the
 Code reviewer diffs against it. Not a git repo → the briefing falls back to the Developer's `summary` and file list.
@@ -252,7 +249,6 @@ session and clears the chat view. We accept that; a long single-agent segment is
 
 - No permission system; every agent has all tools.
 - After `/dev` ends, the context is clean: only the closing note. Restoring the pre-`/dev` conversation is in `TODO.md`.
-- The Plan reviewer does not see the original assignment or the planning chat. Giving it access is in `TODO.md`.
 - "Continue" at the round limit grants **one** more round.
 - Keeping an author's context when work is returned to it is in `TODO.md`.
 

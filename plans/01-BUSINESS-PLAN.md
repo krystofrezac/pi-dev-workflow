@@ -83,13 +83,14 @@ believes the plan itself is wrong, it says so in its feedback and you decide wha
   **not** handed over; the workflow keeps waiting.
 - **Every agent starts with a clean context.** It receives only what it needs — the plan, the
   reviewer's latest feedback, and the current state of the project files — not the previous
-  agent's conversation, and not your original assignment. This keeps reviewers independent of the
-  author's reasoning. The earlier conversations stay visible in the chat for you to scroll back to.
+  agent's conversation. The one exception is the Plan reviewer, which also gets the conversation
+  between you and the Planner (what you and the Planner said, not the Planner's thinking or tool
+  calls), so it can check the plan against what you actually asked and decided. This keeps
+  reviewers independent of the author's reasoning. The earlier conversations stay visible in the chat for you to scroll back to.
 - **The plan is a document**, saved as a file in the project, that you can read and edit. It has
-  a mandatory **Scope** section (what is in, what is out, and the decisions you made). Both
-  reviewers judge against it; the Planner's job is to get it right. Because the Plan reviewer does
-  not see your original assignment, it checks the plan against what the plan itself says you
-  asked for, and it can ask you in the chat when something looks added or missing.
+  a brief **Assignment** (the goal, in the Planner's words) and a mandatory **Scope** section (what is in, and the decisions you made). Both
+  reviewers judge against it; the Planner's job is to get it right. The Plan reviewer checks the
+  plan against the conversation, and it can ask you in the chat when something looks added or missing.
 - **Every agent has all the usual tools.** There is no permission system; the roles are kept by
   instructions, not by blocking tools. (Reviewers are told to report problems, not fix them.)
 - **All agents use the model you currently have selected.**
