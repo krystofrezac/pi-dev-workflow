@@ -12,30 +12,37 @@ export interface BriefingInput {
 	roundLimit: number;
 	/** Absolute path of plan.md. */
 	planPath: string;
+	/** Absolute path of commit.md, the commit message. */
+	commitPath: string;
 	/** The author's hand-over note (reviewers only). */
 	summary?: string;
 	/** Work coming back to an author. */
 	feedback?: Feedback;
-	/** Absolute path of conversation.md: the Plan reviewer's first briefing or resumed message, only when the file was written. */
+	/** Absolute path of the conversation file of the reviewer being activated (planning-conversation.md for the Plan reviewer, development-conversation.md for the Code reviewer): its first briefing or resumed message, only when the file was written. */
 	conversationPath?: string;
 	/** Where the tree stood when development started. */
 	baseline?: Baseline;
+	/** The user approved the commit message (the Committer's second message). */
+	commitApproved?: boolean;
 	/** True when this agent has been briefed before in this workflow: the message is the short one. */
 	resumed?: boolean;
 }
 
-/** One-line title, used for the banner and as the first line of every briefing. */
+/** One-line title, used for the banner and as the first line of every briefing. The Commit stage has no rounds, so no counter. */
 export function briefingTitle(agent: Agent, round: number, roundLimit: number): string {
+	if (stageOf(agent) === "commit") return `${STAGE_LABEL.commit} · ${AGENT_LABEL[agent]}`;
 	return `${STAGE_LABEL[stageOf(agent)]} · ${AGENT_LABEL[agent]} · round ${round}/${roundLimit}`;
 }
 
 export function rules(agent: Agent): string {
 	const handOver = isReviewer(agent)
 		? "- You hand over with exactly one of two tools: `advance` approves the work, `return` sends it back with concrete feedback."
-		: "- You hand over with the `advance` tool: it submits your work for review.";
+		: agent === "committer"
+			? "- You hand over with the `advance` tool: it tells the workflow that this step is done. First the draft of the commit message is ready for the user; later the commit is made."
+			: "- You hand over with the `advance` tool: it submits your work for review.";
 	return `## How this workflow works
 
-- You are one of four agents — Planner, Plan reviewer, Developer, Code reviewer — taking turns in one chat with the user. The user reads everything you write and can answer at any time.
+- You are one of the workflow's agents — Planner, Plan reviewer, Developer, Code reviewer and, when the user asks for a commit, Committer — taking turns in one chat with the user. The user reads everything you write and can answer at any time.
 - Anything you need from the user: ask in plain text, then end your turn and wait for the reply. Do not guess about things that matter.
 - When the user asks you a question, answer it in the chat and end your turn without calling a hand-over tool: a question is not a sign that your work is finished, and a hand-over in reply means the user never gets the answer.
 ${handOver}
@@ -48,6 +55,10 @@ ${handOver}
 /** Both reviewers hold the same bar: nothing moves on while any issue, however small, is open. */
 export const NO_OPEN_ISSUES = `- **Every issue must be resolved before the work moves on.** Size does not matter: a small issue (a typo, a naming nit, a missing edge case, a stale comment, a tiny bit of dead code) is a reason to \`return\`, exactly like a big one. Do not wave it through, and do not approve "with minor remarks" or "with follow-ups" — an approval means you have **no** open issue left.
 - List every issue you found in one \`return\`, so the author can fix them all in one round. Mark nothing as optional.`;
+
+/** What a Code reviewer is told about the user's requests in the development conversation (first briefing and resumed message). */
+export const USER_REQUESTS_IN_SCOPE =
+	"Anything the user asked for there counts as in scope, even if the plan does not list it: it is not an extra change and not a reason to `return`.";
 
 export function section(title: string, body: string): string {
 	return `## ${title}\n\n${body.trim()}`;

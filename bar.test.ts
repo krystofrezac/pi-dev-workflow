@@ -4,8 +4,8 @@ import { type BarStyle, type BarUsage, type BarView, createBar, plainStyle, rend
 
 const view = (patch: Partial<BarView> = {}): BarView => ({
 	agent: "plan-reviewer",
-	round: { planning: 2, development: 1 },
-	roundLimit: { planning: 3, development: 3 },
+	round: { planning: 2, development: 1, commit: 1 },
+	roundLimit: { planning: 3, development: 3, commit: 1 },
 	visited: ["planner"],
 	...patch,
 });
@@ -29,7 +29,7 @@ test("every row has the same width, and both boxes are equally wide", () => {
 });
 
 test("development: planning is done (both ✓), the round counter moves to development", () => {
-	const lines = renderBar(view({ agent: "developer", visited: [], round: { planning: 2, development: 2 } }), 120);
+	const lines = renderBar(view({ agent: "developer", visited: [], round: { planning: 2, development: 2, commit: 1 } }), 120);
 	assert.match(lines[0], /Planning · done/);
 	assert.match(lines[0], /Development · round 2\/3/);
 	assert.match(lines[1], /✓ Planner {3}✓ Plan reviewer/);
@@ -37,19 +37,22 @@ test("development: planning is done (both ✓), the round counter moves to devel
 });
 
 test("the highlight moves back when work is returned; the reviewer keeps its ✓", () => {
-	const lines = renderBar(view({ agent: "planner", visited: ["plan-reviewer"], round: { planning: 3, development: 1 } }), 120);
+	const lines = renderBar(view({ agent: "planner", visited: ["plan-reviewer"], round: { planning: 3, development: 1, commit: 1 } }), 120);
 	assert.match(lines[0], /Planning · round 3\/3/);
 	assert.match(lines[1], /▶ Planner {3}✓ Plan reviewer/);
 });
 
 test("the limit shown follows a granted extra round", () => {
-	const lines = renderBar(view({ roundLimit: { planning: 4, development: 3 }, round: { planning: 4, development: 1 } }), 120);
+	const lines = renderBar(
+		view({ roundLimit: { planning: 4, development: 3, commit: 1 }, round: { planning: 4, development: 1, commit: 1 } }),
+		120,
+	);
 	assert.match(lines[0], /Planning · round 4\/4/);
 });
 
 test("too narrow for two boxes: one line, still fits", () => {
 	assert.deepEqual(renderBar(view(), 60), ["Planning 2/3 · ▶ Plan reviewer"]);
-	assert.deepEqual(renderBar(view({ agent: "code-reviewer", round: { planning: 1, development: 2 } }), 60), [
+	assert.deepEqual(renderBar(view({ agent: "code-reviewer", round: { planning: 1, development: 2, commit: 1 } }), 60), [
 		"Development 2/3 · ▶ Code reviewer",
 	]);
 	const tiny = renderBar(view(), 12);
@@ -76,6 +79,46 @@ test("styling is applied per piece and does not change the layout", () => {
 	assert.match(styled[1], /<D>✓ Planner<\/D>/);
 	assert.match(styled[1], /<A>▶ Plan reviewer<\/A>/);
 	assert.match(styled[1], /<W> {2}Developer<\/W>/);
+});
+
+// ── the Commit box ──
+
+const committing = (patch: Partial<BarView> = {}): BarView => view({ agent: "committer", visited: [], ...patch });
+
+test("Committer active: three boxes, Planning and Development done, Commit with ▶ Committer and no counter", () => {
+	const lines = renderBar(committing(), 120);
+	assert.equal(lines.length, 3);
+	assert.match(lines[0], /^╭─ Planning · done ─+╮ ╭─ Development · done ─+╮ ╭─ Commit ─+╮$/);
+	assert.match(lines[1], /^│ ✓ Planner {3}✓ Plan reviewer {3}│ │ ✓ Developer {3}✓ Code reviewer │ │ ▶ Committer {19}│$/);
+	assert.match(lines[2], /^╰─+╯ ╰─+╯ ╰─+╯$/);
+	assert.equal(new Set(lines.map(width)).size, 1, lines.join("\n"));
+	const [a, b, c] = lines[2].split(" ");
+	assert.ok(width(a) === width(b) && width(b) === width(c));
+	assert.ok(!lines[0].includes("round"));
+});
+
+test("Committer active: three boxes fit at 101 columns (3 × 33 + 2), at 100 the bar collapses to one line", () => {
+	assert.equal(renderBar(committing(), 101).length, 3);
+	assert.equal(width(renderBar(committing(), 101)[0]), 101);
+	assert.deepEqual(renderBar(committing(), 100), ["Commit · ▶ Committer"]);
+});
+
+test("without the Committer the bar has two boxes only", () => {
+	for (const agent of ["planner", "plan-reviewer", "developer", "code-reviewer"] as const) {
+		assert.ok(!renderBar(view({ agent }), 200).join("\n").includes("Commit"), agent);
+	}
+});
+
+test("Committer active: figures go to the right of three boxes when they fit, else on an extra row", () => {
+	const boxes = 3 * 33 + 2;
+	const fits = boxes + 2 + CONTEXT.length;
+	const wide = renderBar(committing(), fits, plainStyle, usage());
+	assert.equal(wide.length, 3);
+	assert.ok(wide[0].endsWith(CONTEXT));
+	const tight = renderBar(committing(), fits - 1, plainStyle, usage());
+	assert.equal(tight.length, 4);
+	assert.equal(tight[3], `${CONTEXT} │ ${WORKFLOW}`);
+	assert.deepEqual(renderBar(committing(), 60, plainStyle, usage()), ["Commit · ▶ Committer", `${CONTEXT} │ ${WORKFLOW}`]);
 });
 
 // ── the figures to the right of the boxes ──

@@ -3,7 +3,9 @@
 A plan → build workflow for [pi](https://github.com/earendil-works/pi), started with `/dev`. Four agents hand work to each
 other in your current pi session: a **Planner** and a **Plan reviewer** (planning), then a **Developer** and a **Code
 reviewer** (development). A reviewer can send work back to the author; you talk to whichever agent is active and confirm the
-plan before development starts. The design is in `plans/01-BUSINESS-PLAN.md` and `plans/01-TECHNICAL-PLAN.md`.
+plan before development starts. After the Code reviewer approves, you can choose **Commit and finish** (in a git project): a
+fifth agent, the **Committer**, drafts the commit message in `commit.md`, you review and edit it, and only after you approve
+does it commit the Developer's work. It never pushes. The design is in `plans/01-BUSINESS-PLAN.md` and `plans/01-TECHNICAL-PLAN.md`.
 
 ## Install
 
@@ -48,7 +50,7 @@ findings are fixed by hand.
 `npm run e2e` creates the Python venv (`.venv`, with `pyte`) on first use and runs the `pi` pinned in `package.json`
 (from `node_modules`). Every scenario runs with its own empty agent directory, so your pi config does not matter. Pass
 scenario names to run only some: `npm run e2e -- stop usage`. The scenarios are `full`, `stop`, `limit`, `abort`, `resume`,
-`compaction`, `manual-compact`, `usage` and `waiting`; `e2e/drive-tui.py` describes each one.
+`compaction`, `manual-compact`, `usage`, `waiting` and `commit`; `e2e/drive-tui.py` describes each one.
 
 `real` is not part of `npm run check`: it runs the same flow with a real model, so it costs money, and it needs the
 credentials in your own pi agent directory. Run it with `npm run e2e -- real` (the model is `E2E_REAL_MODEL`, default

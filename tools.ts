@@ -26,6 +26,8 @@ export interface ToolHost {
 	siblingCalls(): readonly string[];
 	/** A reason the Planner may not hand over yet, or `undefined`. */
 	planProblem(): string | undefined;
+	/** A reason the Committer may not hand over yet, or `undefined`. */
+	commitProblem(): string | undefined;
 }
 
 type Kind = HandOff["kind"];
@@ -44,6 +46,10 @@ function handOver(host: ToolHost, kind: Kind, text: string) {
 		);
 	if (kind === "advance" && agent === "planner") {
 		const problem = host.planProblem();
+		if (problem) throw new Error(problem);
+	}
+	if (kind === "advance" && agent === "committer") {
+		const problem = host.commitProblem();
 		if (problem) throw new Error(problem);
 	}
 	host.setPending({ kind, text });

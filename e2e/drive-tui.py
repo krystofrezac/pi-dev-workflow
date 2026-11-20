@@ -14,8 +14,8 @@ on your pi config; `real` keeps your agent directory, because it needs your cred
 
 Scenarios (default: all)
     full        /dev (no model request until your first message) → Planner ⇄ Plan reviewer → confirmation (Esc asks again, edit, approve)
-                → Developer ⇄ Code reviewer → code confirmation (Esc asks again, comments go to the Code reviewer, which returns to the
-                Developer; the next approval → Finish workflow) → done; an agent activated again sees its own earlier conversation,
+                → Developer ⇄ Code reviewer → code confirmation (Esc asks again, comments go to the Developer, whose hand-over goes to the Code
+                reviewer again; the next approval → Finish workflow) → done; an agent activated again sees its own earlier conversation,
                 nothing of another agent's
     stop        /dev while the Planner waits for your first message → Cancel / Stop; Stop from the plan confirmation
     limit       planning round limit: Esc asks again, Continue, Accept as is, send back, Stop
@@ -27,6 +27,10 @@ Scenarios (default: all)
     manual-compact  /compact while a workflow runs is refused with a notice and changes nothing
     usage       the bar's `agent ctx` figure belongs to the active agent only (a big Planner context is not carried over to the
                 Plan reviewer); the stopped banner shows cost and tokens
+    commit      code confirmation → Commit and finish → the Committer is refused without commit.md, writes it → the message confirmation
+                (an edit that breaks the subject is refused with the reason, comments go to the Committer, a valid edit is what gets committed)
+                → approve → one new commit with the Developer's file only; a second run finishes without committing, a third (no git
+                repository) is not offered "Commit and finish"
     waiting     while the Planner waits for an answer pi reports `blocked` (OSC 7501), the editor still takes typing, the answer reports
                 `working`; Stop while it waits clears `blocked`
 
@@ -58,18 +62,19 @@ def check(name, ok, detail=""):
 
 
 class Tui:
-    def __init__(self, name, env=None, resume=False, settings=None, model=None):
+    def __init__(self, name, env=None, resume=False, settings=None, model=None, git=True):
         self.dir = f"{WORK}/{name}"
         self.repo = f"{self.dir}/repo"
         self.log = f"{self.dir}/log.jsonl"
         if not resume:
             shutil.rmtree(self.dir, ignore_errors=True)
             os.makedirs(self.repo + "/.pi", exist_ok=True)
-            git = ["git", "-c", "user.email=e2e@example.com", "-c", "user.name=e2e"]
-            subprocess.run(git + ["init", "-q"], cwd=self.repo, check=True)
             open(self.repo + "/README.md", "w").write("throwaway repo for the dev-workflow e2e\n")
-            subprocess.run(["git", "add", "."], cwd=self.repo, check=True)
-            subprocess.run(git + ["commit", "-q", "-m", "init"], cwd=self.repo, check=True)
+            if git:  # the repository of a throwaway project; without it the project is not under git
+                config = ["git", "-c", "user.email=e2e@example.com", "-c", "user.name=e2e"]
+                subprocess.run(config + ["init", "-q"], cwd=self.repo, check=True)
+                subprocess.run(["git", "add", "."], cwd=self.repo, check=True)
+                subprocess.run(config + ["commit", "-q", "-m", "init"], cwd=self.repo, check=True)
             if settings:
                 json.dump(settings, open(self.repo + "/.pi/settings.json", "w"))
         self.raw = bytearray()  # everything pi wrote to the terminal, as it came
@@ -193,10 +198,13 @@ class Tui:
 
 
 def tag(r):
-    """The newest briefing of a request, shortened: `# Planning · Planner · round 1/3` → `planner#1`."""
+    """The newest briefing of a request, shortened: `# Planning · Planner · round 1/3` → `planner#1`, `# Commit · Committer` → `committer`."""
     b = r["briefings"][-1] if r["briefings"] else ""
-    m = re.match(r"# \w+ · ([\w ]+) · round (\d+)/", b)
-    return f"{m.group(1).lower().replace(' ', '-')}#{m.group(2)}" if m else "none"
+    m = re.match(r"# \w+ · ([\w ]+?)(?: · round (\d+)/\d+)?$", b)
+    if not m:
+        return "none"
+    name = m.group(1).lower().replace(" ", "-")
+    return f"{name}#{m.group(2)}" if m.group(2) else name
 
 
 def activations(reqs):
@@ -333,7 +341,7 @@ def full():
     s = t.text()
     t.dump("confirm-code")
     dialog = s[s.rfind("Code review passed"):]
-    check("the dialog shows the Code reviewer's approval note and its two options", "code approved: matches the plan" in dialog and "Finish workflow" in dialog and "Send comments to Code reviewer…" in dialog, dialog)
+    check("the dialog shows the Code reviewer's approval note and its two options", "code approved: matches the plan" in dialog and "Finish workflow" in dialog and "Send comments to Developer…" in dialog, dialog)
     check("…and no `Stop workflow` option", "Stop workflow" not in dialog, dialog)
     check("the bar shows Development round 2/3 with the Code reviewer active", bar_has(s, "Development · round 2/3") and "▶ Code reviewer" in s)
     for _ in range(3):
@@ -341,20 +349,20 @@ def full():
     s = t.text()
     check("Esc on the code confirmation (three times) asks it again and does not end the workflow", "Code review passed" in s and "Workflow finished" not in s and "Workflow stopped" not in s, s[-800:])
     t.send(DOWN)
-    t.send(ENTER, 1.0)  # Send comments to Code reviewer…
-    check("'Send comments…' opens an editor for the Code reviewer's comments", t.wait("Comments for the Code reviewer", 5))
+    t.send(ENTER, 1.0)  # Send comments to Developer…
+    check("'Send comments…' opens an editor for the Developer's comments", t.wait("Comments for the Developer", 5))
     t.send(ENTER, 1.0)  # nothing written
     s = t.text()
-    check("empty comments ask the dialog again", "Code review passed" in s.split("Comments for the Code reviewer")[-1], s[-800:])
+    check("empty comments ask the dialog again", "Code review passed" in s.split("Comments for the Developer")[-1], s[-800:])
     t.send(DOWN)
     t.send(ENTER, 1.0)
-    t.wait("Comments for the Code reviewer", 5)
+    t.wait("Comments for the Developer", 5)
     t.send("check the empty case", 0.5)
     t.send(ENTER, 1.0)
-    ok = t.wait("Development · Developer · round 3/3", 60)
-    check("the Code reviewer checked the comments, returned to the Developer, and development round 3/3 started", ok, t.text()[-1500:])
-    ok = t.wait("Code review passed", 60) and t.text().count("Code review passed") >= 1 and "▶ Development · Code reviewer · round 3/3" in t.text()
-    check("the Developer's next hand-over, the Code reviewer's approval and the code confirmation came back", ok, t.text()[-1500:])
+    ok = t.wait("Returned from the user: check the empty case", 60) and "▶ Development · Developer · round 2/3" in t.text()
+    check("the Developer was activated with the user's comments, still development round 2/3", ok, t.text()[-1500:])
+    ok = t.wait("Code review passed", 60) and "▶ Development · Code reviewer · round 2/3" in t.text()
+    check("the Developer's hand-over, the Code reviewer's approval and the code confirmation came back", ok, t.text()[-1500:])
     t.send(ENTER, 1.0)  # Finish workflow
     ok = t.wait("Workflow finished", 30)
     check("Finish workflow ends the workflow", ok)
@@ -365,11 +373,11 @@ def full():
         print(s[-3000:])
     check("banner: ✓ Workflow finished, with the Code reviewer's note", "✓ Workflow finished" in s and "code approved: matches the plan" in s)
     check("banners for the development stage",
-          all(x in s for x in ["▶ Development · Developer · round 1/3", "▶ Development · Code reviewer · round 1/3", "▶ Development · Developer · round 2/3", "▶ Development · Code reviewer · round 2/3", "▶ Development · Developer · round 3/3", "▶ Development · Code reviewer · round 3/3"])
-          and s.count("▶ Development · Code reviewer · round 2/3") == 2)
-    check("the Code reviewer's second round-2 banner shows the user's comments", "Returned from the user: check the empty case" in s)
+          all(x in s for x in ["▶ Development · Developer · round 1/3", "▶ Development · Code reviewer · round 1/3", "▶ Development · Developer · round 2/3", "▶ Development · Code reviewer · round 2/3"])
+          and s.count("▶ Development · Developer · round 2/3") == 2 and s.count("▶ Development · Code reviewer · round 2/3") == 2
+          and "round 3/3" not in s.split("▶ Development · Developer · round 1/3")[-1])
+    check("the Developer's second round-2 banner shows the user's comments (no round was added)", "Returned from the user: check the empty case" in s)
     check("everything is still on screen after the end (assignment, reviewer feedback)", "a hello file" in s and "add a second line to hello.txt" in s)
-    check("the Code reviewer's return after the comments is on screen", "the user's comment holds: check the empty case" in s)
     t.send("\x0f", 1.0)  # Ctrl+O: expand
     s_open = t.text()
     t.dump("expanded")
@@ -386,9 +394,9 @@ def full():
     check("the figures went with the bar: no `agent ctx` and no `workflow …` below the banner", "agent ctx" not in tail and "workflow no price" not in tail, tail)
 
     reqs = t.agent_requests()
-    expected = ["planner#1", "plan-reviewer#1", "planner#2", "plan-reviewer#2", "developer#1", "code-reviewer#1", "developer#2", "code-reviewer#2", "developer#3", "code-reviewer#3"]
-    check("agents ran in the expected order (the Code reviewer's turn on the user's comments is still round 2)", activations(reqs) == expected, activations(reqs))
-    check("17 requests in total — none after the final hand-off", len(reqs) == 17, f"got {len(reqs)}")
+    expected = ["planner#1", "plan-reviewer#1", "planner#2", "plan-reviewer#2", "developer#1", "code-reviewer#1", "developer#2", "code-reviewer#2", "developer#2", "code-reviewer#2"]
+    check("agents ran in the expected order (the Developer's turn on the user's comments and the Code reviewer's next one are still round 2)", activations(reqs) == expected, activations(reqs))
+    check("16 requests in total — none after the final hand-off", len(reqs) == 16, f"got {len(reqs)}")
     first_of = {}
     for r in reqs:
         first_of.setdefault(tag(r), r)
@@ -400,12 +408,9 @@ def full():
         """The titles of an agent's briefings up to round k, as the key `<agent>#k` names them: `plan-reviewer#2` → rounds 1 and 2."""
         agent, k = key.split("#")
         stage = "Planning" if agent in ("planner", "plan-reviewer") else "Development"
-        titles = [f"# {stage} · {agent.replace('-', ' ').capitalize()} · round {i}/3" for i in range(1, int(k) + 1)]
-        if agent == "code-reviewer" and int(k) >= 3:
-            titles.insert(2, titles[1])  # the user's comments activated the Code reviewer again in round 2
-        return titles
+        return [f"# {stage} · {agent.replace('-', ' ').capitalize()} · round {i}/3" for i in range(1, int(k) + 1)]
 
-    check("an activation's first request carries exactly its own agent's briefings, rounds 1…k in order (the user's comments add one more for the Code reviewer), and starts with the round-1 briefing",
+    check("an activation's first request carries exactly its own agent's briefings, rounds 1…k in order, and starts with the round-1 briefing",
           all(r["briefings"] == own_titles(k) and r["conversation"][0].startswith("user:" + own_titles(k)[0]) for k, r in first_of.items()),
           {k: r["briefings"] for k, r in first_of.items()})
     joined = {k: "\n".join(r["conversation"]) for k, r in first_of.items()}
@@ -417,40 +422,63 @@ def full():
     check("the returned Developer sees its own `write` only (the Planner's plan writes are hidden) and no `return` of the reviewer",
           joined["developer#2"].count("<call write>") == 1 and "<call return>" not in joined["developer#2"], first_of["developer#2"]["conversation"])
 
-    commented = [r for r in reqs if tag(r) == "code-reviewer#2"][-1]
+    developer_titles = own_titles("developer#2")
+    commented = next(r for r in reqs if tag(r) == "developer#2" and len(r["briefings"]) == 3)
     joined_c = "\n".join(commented["conversation"])
-    check("on the user's comments the Code reviewer sees its own earlier conversation, with three briefings, and nothing of the Developer's",
-          len(commented["briefings"]) == 3 and "<call return>" in joined_c and "<call write>" not in joined_c and "return" in commented["tools"], commented)
+    check("on the user's comments the Developer sees its own earlier conversation plus the comments briefing, and no `return` of the reviewer; it has `advance` only",
+          commented["briefings"] == developer_titles + [developer_titles[-1]] and joined_c.count("<call write>") == 2 and "<call return>" not in joined_c
+          and "Returned from the user" in joined_c and "advance" in commented["tools"] and "return" not in commented["tools"], commented)
+    handed = [r for r in reqs if tag(r) == "code-reviewer#2"][-1]
+    joined_h = "\n".join(handed["conversation"])
+    check("the Code reviewer gets its next briefing as a hand-over: its own earlier conversation, three briefings, nothing of the Developer's",
+          handed["briefings"] == own_titles("code-reviewer#2") + [own_titles("code-reviewer#2")[-1]] and "<call return>" in joined_h and "<call write>" not in joined_h
+          and "Handed over from Developer" in joined_h and "return" in handed["tools"], handed)
 
     briefings = t.briefings()
-    check("11 briefings were recorded", len(briefings) == 11, len(briefings))
+    check("10 briefings were recorded", len(briefings) == 10, len(briefings))
     reviewer = next(b for b in briefings if b.startswith("# Planning · Plan reviewer · round 1"))
     check("the Plan reviewer's briefing has the Planner's summary and no assignment text", "plan ready" in reviewer and "a hello file" not in reviewer)
-    conversation = open(t.repo + "/.pi/dev/0001/conversation.md").read() if os.path.exists(t.repo + "/.pi/dev/0001/conversation.md") else ""
-    check("the run folder holds conversation.md with the user's first message, and the Plan reviewer's briefing names it",
-          "a hello file" in conversation and "/.pi/dev/0001/conversation.md" in reviewer, conversation[:300])
+    run = t.repo + "/.pi/dev/0001"
+
+    def read(name):
+        return open(f"{run}/{name}").read() if os.path.exists(f"{run}/{name}") else ""
+
+    planning = read("planning-conversation.md")
+    check("the run folder holds planning-conversation.md with the user's first message, and the Plan reviewer's briefing names it",
+          "a hello file" in planning and "/.pi/dev/0001/planning-conversation.md" in reviewer, planning[:300])
+    development = read("development-conversation.md")
+    check("the run folder holds development-conversation.md with the user's code-confirmation comment, and no conversation.md",
+          "## User (code confirmation)\n\ncheck the empty case" in development and "a hello file" not in development and not os.path.exists(run + "/conversation.md"),
+          development[:300])
     developer = next(b for b in briefings if b.startswith("# Development · Developer · round 1"))
     check("the Developer's briefing carries the git baseline", re.search(r"Baseline commit: `[0-9a-f]{40}`", developer) is not None, developer[-600:])
     code = next(b for b in briefings if b.startswith("# Development · Code reviewer · round 1"))
     check("the Code reviewer's first briefing has the Developer's summary and the diff command", "implemented hello.txt" in code and "git diff " in code)
+    check("…and names development-conversation.md and says the user's requests in it are in scope",
+          f"`{run}/development-conversation.md`" in code and "Anything the user asked for there counts as in scope" in code, code[-1500:])
     for message in [
         "# Planning · Planner · round 2/3\n\nReturned from Plan reviewer: add the word REVIEWED to the plan",
         "# Planning · Plan reviewer · round 2/3\n\nHanded over from Planner: plan revised\n\n"
-        f"The conversation between the user and the Planner was refreshed; read it again: `{t.repo}/.pi/dev/0001/conversation.md`",
+        f"The conversation between the user and the Planner was refreshed; read it again: `{run}/planning-conversation.md`",
         "# Development · Developer · round 2/3\n\nReturned from Code reviewer: add a second line to hello.txt",
-        "# Development · Code reviewer · round 2/3\n\nHanded over from Developer: implemented hello.txt",
     ]:
         title = message.split("\n")[0]
         got = [b for b in briefings if b.startswith(message.split(":")[0])]
         check(f"{title[2:]}: the message is the title line and the news, nothing else", got == [message], got)
-    instruction = (
-        "Check each comment in the code. If it is valid, `return` to the Developer with concrete, actionable feedback. If it is not valid, "
-        "or it is unclear, say so or ask the user. `advance` only when no issue is open."
+    handover = (
+        "# Development · Code reviewer · round 2/3\n\nHanded over from Developer: implemented hello.txt\n\n"
+        f"The conversation between the user and the Developer was refreshed; read it again: `{run}/development-conversation.md`\n\n"
+        "Anything the user asked for there counts as in scope, even if the plan does not list it: it is not an extra change and not a reason to `return`."
     )  # a literal on purpose: not imported from the prompts
-    check("# Development · Code reviewer · round 2/3: the user's comments, then the instruction",
-          f"# Development · Code reviewer · round 2/3\n\nReturned from the user: check the empty case\n\n{instruction}" in briefings, [b[:80] for b in briefings])
-    check("# Development · Developer · round 3/3: the Code reviewer's feedback on the user's comments",
-          "# Development · Developer · round 3/3\n\nReturned from Code reviewer: the user's comment holds: check the empty case" in briefings, [b[:80] for b in briefings])
+    check("# Development · Code reviewer · round 2/3: the hand-over, the refreshed development file and the user-requests sentence — after the Developer's work and again after the user's comments",
+          [b for b in briefings if b.startswith("# Development · Code reviewer · round 2/3")] == [handover, handover], [b[:80] for b in briefings])
+    instruction = (
+        "These comments are part of the job and in scope even if the plan does not list them; for these comments only, this overrides "
+        '"do not add anything outside the plan" in your first briefing. If a comment is unclear, ask the user in the chat. When you are done, '
+        "hand over with `advance` and a summary, as usual; all your other rules stand."
+    )  # a literal on purpose: not imported from the prompts
+    check("# Development · Developer · round 2/3: the user's comments, then the fixed text",
+          f"# Development · Developer · round 2/3\n\nReturned from the user: check the empty case\n\n{instruction}" in briefings, [b[:80] for b in briefings])
 
     t.type_line("what do you see?")
     ok = t.wait("I see 2 message(s)", 30)
@@ -914,7 +942,178 @@ def usage():
     t.close()
 
 
-SCENARIOS = {"full": full, "stop": stop, "limit": limit, "abort": abort, "resume": resume, "compaction": compaction, "manual-compact": manual_compact, "usage": usage, "waiting": waiting}
+def git_out(t, *args):
+    return subprocess.run(["git", *args], cwd=t.repo, capture_output=True, text=True, check=True).stdout
+
+
+def to_code_confirmation(t, label):
+    """/dev, the assignment, the plan approved, up to the code confirmation (both reviewers approve at once). False when it did not get there."""
+    t.type_line("/dev")
+    t.wait(BANNER, 30)
+    t.type_line("a hello file")
+    ok = t.wait("Confirm the plan", 60)
+    if ok:
+        t.send(ENTER, 1.0)  # Approve and start development
+        ok = t.wait("Code review passed", 60)
+    check(f"({label}) the workflow reached the code confirmation", ok)
+    if not ok:
+        print(t.text()[-2500:])
+        t.close()
+    return ok
+
+
+def commit():
+    print("━━ commit ━━")
+    env = {"E2E_PLAN_APPROVE_ROUND": "1", "E2E_CODE_APPROVE_ROUND": "1"}
+    t = Tui("commit", env=env)
+    if not to_code_confirmation(t, "commit"):
+        return
+    dialog = t.text()
+    dialog = dialog[dialog.rfind("Code review passed"):]
+    check("in a git project the code confirmation offers Finish workflow, Send comments to Developer… and Commit and finish",
+          all(x in dialog for x in ["Finish workflow", "Send comments to Developer…", "Commit and finish"]), dialog)
+    t.send(DOWN)
+    t.send(DOWN)
+    t.send(ENTER, 1.0)  # Commit and finish
+    ok = t.wait("Confirm the commit message", 60)
+    check("the Committer wrote commit.md and the commit message confirmation opened", ok)
+    if not ok:
+        print(t.text()[-3000:])
+        t.close()
+        return
+    s = t.text()
+    t.dump("confirm-commit")
+    check("advance without commit.md was refused with the reason", "The commit message file does not exist" in s, s[-1500:])
+    check("banner: ▶ Commit · Committer, without a round counter", "▶ Commit · Committer" in s and "Commit · Committer · round" not in s)
+    banner = banner_slice(s, "▶ Commit · Committer") or ""
+    check("the banner shows the start of the briefing", "You are the Committer." in banner, banner)
+    dialog = s[s.rfind("Confirm the commit message"):]
+    path = t.repo + "/.pi/dev/0001/commit.md"
+    check("the dialog shows the path of commit.md and the subject line",
+          ".pi/dev/0001/commit.md" in dialog and "Add a hello file" in dialog, dialog)
+    check("…and its four options", all(x in dialog for x in ["Approve and commit", "Edit commit message…", "Send comments to Committer…", "Finish without committing"]), dialog)
+    rows = bar_rows(s)
+    check("the bar shows three boxes: Planning · done, Development · done and Commit with ▶ Committer",
+          rows and "Planning · done" in rows[0] and "Development · done" in rows[0] and "╭─ Commit ─" in rows[0] and "▶ Committer" in rows[1], rows)
+    check("nothing is committed before the approval", git_out(t, "rev-list", "--count", "HEAD").strip() == "1")
+    check("commit.md is the Committer's draft", open(path).read().startswith("Add a hello file\n\n## Details"))
+
+    # Edit commit message… → a lower-case subject → Approve is refused with the reason
+    for _ in range(3):
+        t.send("\x1b", 1.0)
+    check("Esc on the message confirmation (three times) asks it again", "Confirm the commit message" in t.text() and "Workflow finished" not in t.text())
+    t.send(DOWN)
+    t.send(ENTER, 1.0)
+    check("'Edit commit message…' opens the file in the editor", t.wait("Add a hello file", 5) and "submit" in t.text())
+    for _ in range(8):
+        t.send("\x1b[A", 0.1)  # the cursor starts at the end: up to the first line
+    t.send("\x01", 0.2)  # Ctrl+A: start of the line
+    t.send("x", 0.5)
+    t.send(ENTER, 1.0)
+    edited = open(path).read()
+    check("the edited message was written back to the file", edited.startswith("xAdd a hello file"), edited)
+    first_line = edited.split("\n")[0]
+    check("calibration: the edit made the subject start with a lower-case letter", first_line[:1].islower(), first_line)
+    check("…and the confirmation is asked again", t.wait("Confirm the commit message", 5))
+    t.send(ENTER, 1.0)  # Approve and commit
+    s = t.text()
+    dialog = s[s.rfind("Confirm the commit message"):]
+    check("Approve with a broken subject shows the reason and asks again", "must start with an upper-case letter" in dialog and "Approve and commit" in dialog, dialog)
+    check("…and nothing is committed", git_out(t, "rev-list", "--count", "HEAD").strip() == "1")
+
+    # Send comments to Committer… (empty first: asked again)
+    t.send(DOWN)
+    t.send(DOWN)
+    t.send(ENTER, 1.0)
+    check("'Send comments…' opens an editor for the Committer's comments", t.wait("Comments for the Committer", 5))
+    t.send(ENTER, 1.0)  # nothing written
+    s = t.text()
+    check("empty comments ask the dialog again", "Confirm the commit message" in s.split("Comments for the Committer")[-1], s[-800:])
+    t.send(DOWN)
+    t.send(DOWN)
+    t.send(ENTER, 1.0)
+    t.wait("Comments for the Committer", 5)
+    t.send("mention the details", 0.5)
+    t.send(ENTER, 1.0)
+    ok = t.wait("Returned from the user: mention the details", 60)
+    check("the Committer was activated with the user's comments", ok, t.text()[-1500:])
+    t.wait("Revised after the comments", 30)
+    t.wait("Approve and commit", 30)
+    s = t.text()
+    check("it rewrote commit.md and the message confirmation came back", "Revised after the comments: mention the details" in open(path).read() and "Approve and commit" in s[s.rfind("Confirm the commit message"):], s[-1500:])
+    check("the comments are no round: the banner has no counter and the bar still shows the Commit box",
+          "Commit · Committer · round" not in s and "╭─ Commit ─" in (bar_rows(s) or [""])[0])
+
+    # a valid edit is what gets committed
+    t.send(DOWN)
+    t.send(ENTER, 1.0)
+    t.wait("Revised after the comments", 5)
+    t.send("EDITED-BY-USER", 0.5)
+    t.send(ENTER, 1.0)
+    check("the second edit was written back", "EDITED-BY-USER" in open(path).read())
+    t.wait("Confirm the commit message", 5)
+    check("nothing is committed before the approval (still)", git_out(t, "rev-list", "--count", "HEAD").strip() == "1")
+    t.send(ENTER, 1.0)  # Approve and commit
+    ok = t.wait("Workflow finished", 60)
+    check("approving commits and ends the workflow", ok)
+    t.pump(2)
+    s = t.text()
+    t.dump("final")
+    if not ok:
+        print(s[-3000:])
+    banner = s[s.rfind("✓ Workflow finished"):]
+    check("banner: ✓ Workflow finished, with the Committer's summary as the note", "✓ Workflow finished" in s and "committed: Add a hello file" in banner, banner)
+    check("the bar is gone", "╭─" not in s.split("Workflow finished")[-1])
+    check("one new commit", git_out(t, "rev-list", "--count", "HEAD").strip() == "2", git_out(t, "log", "--oneline"))
+    message = git_out(t, "log", "-1", "--format=%B").rstrip("\n")
+    check("its message is commit.md, `#` headings included", message == open(path).read().rstrip("\n") and "## Details" in message and "EDITED-BY-USER" in message, message)
+    files = git_out(t, "show", "--name-only", "--format=", "HEAD").split()
+    check("it holds the Developer's file only: no baseline-dirty file, nothing under .pi/dev/", files == ["hello.txt"], files)
+    check("nothing was pushed (the project has no remote)", git_out(t, "remote").strip() == "")
+    reqs = t.agent_requests()
+    committer = [r for r in reqs if tag(r) == "committer"]
+    check("the Committer made three requests for the draft (the first hand-over was refused), two for the comments and two for the commit",
+          activations(reqs)[-1] == "committer" and len(committer) == 3 + 2 + 2, (activations(reqs), len(committer)))
+    check("the Committer has `advance` and no `return`", committer and all("advance" in r["tools"] and "return" not in r["tools"] for r in committer))
+    check("its first request carries its own briefing only (nothing of the Developer or the reviewers)", committer[0]["briefings"] == ["# Commit · Committer"] and committer[0]["n"] == 1, committer[0])
+    t.close()
+
+    # a second run: finish without committing
+    t = Tui("commit-finish", env=env)
+    if not to_code_confirmation(t, "finish"):
+        return
+    t.send(DOWN)
+    t.send(DOWN)
+    t.send(ENTER, 1.0)  # Commit and finish
+    ok = t.wait("Confirm the commit message", 60)
+    check("(finish) the commit message confirmation opened", ok)
+    if ok:
+        t.send(DOWN)
+        t.send(DOWN)
+        t.send(DOWN)
+        t.send(ENTER, 1.0)  # Finish without committing
+        ok = t.wait("Workflow finished", 30)
+        t.pump(2)
+        s = t.text()
+        t.dump("final")
+        banner = s[s.rfind("✓ Workflow finished"):]
+        check("(finish) Finish without committing ends the workflow with a note that nothing was committed", ok and "nothing was committed" in banner, banner)
+        check("(finish) no new commit", git_out(t, "rev-list", "--count", "HEAD").strip() == "1")
+        check("(finish) the Committer made no request after the draft", activations(t.agent_requests())[-1] == "committer" and len([r for r in t.agent_requests() if tag(r) == "committer"]) == 3)
+    t.close()
+
+    # a third run: not a git repository
+    t = Tui("commit-nogit", env=env, git=False)
+    if not to_code_confirmation(t, "no git"):
+        return
+    dialog = t.text()
+    dialog = dialog[dialog.rfind("Code review passed"):]
+    check("(no git) the code confirmation offers Finish workflow and Send comments, not Commit and finish",
+          "Finish workflow" in dialog and "Send comments to Developer…" in dialog and "Commit and finish" not in dialog, dialog)
+    t.close()
+
+
+SCENARIOS = {"full": full, "stop": stop, "limit": limit, "abort": abort, "resume": resume, "compaction": compaction, "manual-compact": manual_compact, "usage": usage, "waiting": waiting, "commit": commit}
 OPT_IN = {"real": real}
 
 if __name__ == "__main__":

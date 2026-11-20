@@ -4,27 +4,29 @@
  * `transition()` turns a hand-off (`advance` / `return`) into the next step. Where the user has to
  * decide something (plan confirmation, code confirmation, round limit) the step says so and the
  * caller — which owns the dialogs — feeds the answer back through `resolvePlanConfirmation()` /
- * `resolveCodeConfirmation()` / `resolveRoundLimit()`.
+ * `resolveCodeConfirmation()` / `resolveCommitConfirmation()` / `resolveRoundLimit()`.
  * Every function returns new objects; a state is never mutated.
  */
 
-export type Agent = "planner" | "plan-reviewer" | "developer" | "code-reviewer";
-export type Stage = "planning" | "development";
+export type Agent = "planner" | "plan-reviewer" | "developer" | "code-reviewer" | "committer";
+export type Stage = "planning" | "development" | "commit";
 export type Outcome = "finished" | "stopped";
 
-export const AGENTS: readonly Agent[] = ["planner", "plan-reviewer", "developer", "code-reviewer"];
-export const STAGES: readonly Stage[] = ["planning", "development"];
+export const AGENTS: readonly Agent[] = ["planner", "plan-reviewer", "developer", "code-reviewer", "committer"];
+export const STAGES: readonly Stage[] = ["planning", "development", "commit"];
 
 export const AGENT_LABEL: Record<Agent, string> = {
 	planner: "Planner",
 	"plan-reviewer": "Plan reviewer",
 	developer: "Developer",
 	"code-reviewer": "Code reviewer",
+	committer: "Committer",
 };
 
 export const STAGE_LABEL: Record<Stage, string> = {
 	planning: "Planning",
 	development: "Development",
+	commit: "Commit",
 };
 
 export const DEFAULT_ROUND_LIMIT = 3;
@@ -32,11 +34,19 @@ export const DEFAULT_ROUND_LIMIT = 3;
 /** Name of the session entry that mirrors the state (`data: null` = no workflow). */
 export const STATE_ENTRY = "dev-state";
 
-export const stageOf = (agent: Agent): Stage => (agent === "planner" || agent === "plan-reviewer" ? "planning" : "development");
+export const stageOf = (agent: Agent): Stage => {
+	if (agent === "committer") return "commit";
+	return agent === "planner" || agent === "plan-reviewer" ? "planning" : "development";
+};
 export const isReviewer = (agent: Agent): boolean => agent === "plan-reviewer" || agent === "code-reviewer";
-export const authorOf = (stage: Stage): Agent => (stage === "planning" ? "planner" : "developer");
-export const reviewerOf = (stage: Stage): Agent => (stage === "planning" ? "plan-reviewer" : "code-reviewer");
-export const agentsOf = (stage: Stage): [Agent, Agent] => [authorOf(stage), reviewerOf(stage)];
+export const authorOf = (stage: Stage): Agent => (stage === "planning" ? "planner" : stage === "development" ? "developer" : "committer");
+/** The commit stage has no reviewer: the user reviews it. */
+export const reviewerOf = (stage: Stage): Agent | undefined =>
+	stage === "planning" ? "plan-reviewer" : stage === "development" ? "code-reviewer" : undefined;
+export const agentsOf = (stage: Stage): Agent[] => {
+	const reviewer = reviewerOf(stage);
+	return reviewer ? [authorOf(stage), reviewer] : [authorOf(stage)];
+};
 
 /** Where the working tree stood when development started. `git: false` → not a repository (or no commits). */
 export type Baseline = { git: false } | { git: true; head: string; dirtyFiles: string[] };
@@ -47,7 +57,7 @@ export interface WorkflowState {
 	/** Absolute path of `<project>/.pi/dev/<id>`. */
 	dir: string;
 	agent: Agent;
-	/** Current author⇄reviewer cycle per stage, starting at 1. */
+	/** Current author⇄reviewer cycle per stage, starting at 1. The `commit` entries have no meaning: that stage has no rounds. */
 	round: Record<Stage, number>;
 	roundLimit: Record<Stage, number>;
 	/** Agents that have handed over in the current stage (drives the ✓ marks). */
@@ -56,6 +66,8 @@ export interface WorkflowState {
 	savedTools: string[];
 	/** Set when development starts. */
 	baseline?: Baseline;
+	/** The user approved the commit message: the Committer's next hand-over ends the workflow. */
+	commitApproved?: boolean;
 }
 
 export function initialState(input: { id: string; dir: string; savedTools: string[] }): WorkflowState {
@@ -63,8 +75,8 @@ export function initialState(input: { id: string; dir: string; savedTools: strin
 		id: input.id,
 		dir: input.dir,
 		agent: "planner",
-		round: { planning: 1, development: 1 },
-		roundLimit: { planning: DEFAULT_ROUND_LIMIT, development: DEFAULT_ROUND_LIMIT },
+		round: { planning: 1, development: 1, commit: 1 },
+		roundLimit: { planning: DEFAULT_ROUND_LIMIT, development: DEFAULT_ROUND_LIMIT, commit: 1 },
 		visited: [],
 		savedTools: [...input.savedTools],
 	};
@@ -91,6 +103,8 @@ export type Next =
 	| { type: "confirm-plan"; note: string; approved: boolean }
 	/** Ask the user to confirm the work the Code reviewer approved (`note` is its approval note). */
 	| { type: "confirm-code"; note: string }
+	/** Ask the user to review the commit message the Committer wrote. */
+	| { type: "confirm-commit" }
 	/** Ask the user what to do after `roundLimit` rounds without approval. */
 	| { type: "round-limit"; stage: Stage; feedback: string }
 	| { type: "end"; outcome: Outcome; note?: string };
@@ -138,6 +152,10 @@ export function transition(state: WorkflowState, handOff: HandOff): Step {
 			return handOff.kind === "advance"
 				? { state: done, next: { type: "confirm-code", note: handOff.text } }
 				: returned(done, handOff.text);
+		case "committer":
+			return state.commitApproved
+				? { state: done, next: { type: "end", outcome: "finished", note: handOff.text } }
+				: { state: done, next: { type: "confirm-commit" } };
 	}
 }
 
@@ -158,7 +176,7 @@ export function resolvePlanConfirmation(state: WorkflowState, choice: PlanChoice
 	}
 }
 
-export type CodeChoice = { kind: "finish" } | { kind: "comment"; comments: string };
+export type CodeChoice = { kind: "finish" } | { kind: "comment"; comments: string } | { kind: "commit" };
 
 /** The user answered the code confirmation; `note` is the Code reviewer's approval note. */
 export function resolveCodeConfirmation(state: WorkflowState, choice: CodeChoice, note: string): Step {
@@ -167,7 +185,24 @@ export function resolveCodeConfirmation(state: WorkflowState, choice: CodeChoice
 			return { state, next: { type: "end", outcome: "finished", note } };
 		case "comment":
 			// The round number is not increased: your comments are not a reviewer round.
-			return activate(state, "code-reviewer", { feedback: { from: "user", text: choice.comments } });
+			return activate(state, "developer", { feedback: { from: "user", text: choice.comments } });
+		case "commit":
+			return activate(state, "committer");
+	}
+}
+
+export type CommitChoice = { kind: "approve" } | { kind: "send-back"; comments: string } | { kind: "finish" };
+
+/** The user answered the commit message confirmation. (Editing the message file changes no state, so it is not a choice.) */
+export function resolveCommitConfirmation(state: WorkflowState, choice: CommitChoice): Step {
+	switch (choice.kind) {
+		case "approve":
+			return activate({ ...state, commitApproved: true }, "committer", { feedback: { from: "user", text: "approved" } });
+		case "send-back":
+			// There are no rounds in this stage: your comments change no number.
+			return activate(state, "committer", { feedback: { from: "user", text: choice.comments } });
+		case "finish":
+			return { state, next: { type: "end", outcome: "finished", note: "Finished without committing: nothing was committed." } };
 	}
 }
 
@@ -197,10 +232,16 @@ export function resolveRoundLimit(state: WorkflowState, stage: Stage, feedback: 
 /** Validate a `dev-state` entry's data. Anything malformed counts as "no workflow". */
 export function parseState(data: unknown): WorkflowState | undefined {
 	if (!data || typeof data !== "object") return undefined;
-	const { id, dir, agent, round, roundLimit, visited, savedTools, baseline } = data as Record<string, unknown>;
+	const { id, dir, agent, round, roundLimit, visited, savedTools, baseline, commitApproved } = data as Record<string, unknown>;
 	const isAgent = (v: unknown): v is Agent => AGENTS.includes(v as Agent);
 	const isCount = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v >= 1;
-	const isRound = (v: unknown): v is Record<Stage, number> => !!v && STAGES.every((s) => isCount((v as Record<string, unknown>)[s]));
+	// `commit` is optional: states saved before the Commit stage existed have no entry for it.
+	const isRound = (v: unknown): v is Record<Stage, number> =>
+		!!v &&
+		typeof v === "object" &&
+		isCount((v as Record<string, unknown>).planning) &&
+		isCount((v as Record<string, unknown>).development) &&
+		((v as Record<string, unknown>).commit === undefined || isCount((v as Record<string, unknown>).commit));
 	const ok =
 		typeof id === "string" &&
 		typeof dir === "string" &&
@@ -216,10 +257,11 @@ export function parseState(data: unknown): WorkflowState | undefined {
 		id,
 		dir,
 		agent,
-		round: { planning: round.planning, development: round.development },
-		roundLimit: { planning: roundLimit.planning, development: roundLimit.development },
+		round: { planning: round.planning, development: round.development, commit: round.commit ?? 1 },
+		roundLimit: { planning: roundLimit.planning, development: roundLimit.development, commit: roundLimit.commit ?? 1 },
 		visited: [...visited],
 		savedTools: [...savedTools],
 		...(baseline && typeof baseline === "object" ? { baseline: baseline as Baseline } : {}),
+		...(commitApproved === true ? { commitApproved } : {}),
 	};
 }

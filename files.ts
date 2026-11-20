@@ -1,5 +1,5 @@
 /**
- * Files on disk: the run directory, the plan, the git baseline.
+ * Files on disk: the run directory, the plan, the commit message, the git baseline.
  */
 
 import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
@@ -11,8 +11,14 @@ export const runsRoot = (cwd: string): string => join(cwd, ".pi", "dev");
 
 export const planPath = (dir: string): string => join(dir, "plan.md");
 
+/** The commit message the Committer drafts and the user approves; committed verbatim. */
+export const commitMessagePath = (dir: string): string => join(dir, "commit.md");
+
 /** The planning conversation, rewritten each time the Plan reviewer is activated. */
-export const conversationPath = (dir: string): string => join(dir, "conversation.md");
+export const planningConversationPath = (dir: string): string => join(dir, "planning-conversation.md");
+
+/** The development conversation, rewritten each time the Code reviewer is activated. */
+export const developmentConversationPath = (dir: string): string => join(dir, "development-conversation.md");
 
 /** Create `<project>/.pi/dev/<NNNN>/` — NNNN is the next free number. */
 export function allocateRunDir(cwd: string): { id: string; dir: string } {
@@ -36,6 +42,23 @@ export function planProblem(dir: string): string | undefined {
 	const text = readFileSync(path, "utf8");
 	if (!/^#{1,6}[ \t]+Scope\b/im.test(text)) {
 		return `The plan (${path}) has no "Scope" section. Add a "## Scope" heading — in / decisions made with the user — then call advance again.`;
+	}
+	return undefined;
+}
+
+/**
+ * A problem with the commit message that blocks the hand-over (or the commit), or `undefined` when it is fine: the
+ * file exists, its first line is a subject starting with an upper-case letter, and a description follows the blank line.
+ */
+export function commitMessageProblem(dir: string): string | undefined {
+	const path = commitMessagePath(dir);
+	if (!existsSync(path)) return `The commit message file does not exist: ${path}. Write it first (subject, blank line, description).`;
+	const [subject = "", ...rest] = readFileSync(path, "utf8").split("\n");
+	if (subject.trim() === "")
+		return `The first line of ${path} is empty: it must be the subject, a short line starting with an upper-case letter.`;
+	if (!/^\p{Lu}/u.test(subject)) return `The subject of ${path} must start with an upper-case letter: "${subject.trim()}".`;
+	if (rest[0]?.trim() !== "" || !rest.some((line) => line.trim() !== "")) {
+		return `${path} needs a blank line after the subject, then a description (context for the reviewers of the merge request).`;
 	}
 	return undefined;
 }

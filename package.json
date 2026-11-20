@@ -1,7 +1,7 @@
 {
 	"name": "pi-dev-workflow",
 	"version": "0.1.0",
-	"description": "A plan → build workflow for pi (/dev) run by four agents: Planner, Plan reviewer, Developer and Code reviewer.",
+	"description": "A plan → build workflow for pi (/dev) run by four agents: Planner, Plan reviewer, Developer and Code reviewer, plus a Committer when the user asks for a commit.",
 	"private": true,
 	"type": "module",
 	"engines": {

@@ -55,12 +55,13 @@ no workflow) after every change. Restored from the latest such entry on the curr
 ```
 id:          "0003"                                    also the run directory name
 dir:         <project>/.pi/dev/0003
-agent:       planner | plan-reviewer | developer | code-reviewer      (= the stage is implied)
-round:       { planning: 1.., development: 1.. }       current author⇄reviewer cycle, starts at 1
-roundLimit:  { planning: 3, development: 3 }
+agent:       planner | plan-reviewer | developer | code-reviewer | committer      (= the stage is implied)
+round:       { planning: 1.., development: 1.., commit: 1 }       current author⇄reviewer cycle, starts at 1; `commit` is unused (no rounds), always 1
+roundLimit:  { planning: 3, development: 3, commit: 1 }
 visited:     agents that have handed over in the current stage (drives the ✓ marks)
 savedTools:  the tool set before /dev, restored when the workflow ends
 baseline:    git HEAD + files already dirty, recorded when development starts
+commitApproved: the user approved commit.md; tells the Committer's two hand-overs apart (missing = false)
 
 pending:     advance | return(feedback) | undefined    in memory only: set by a tool, consumed at turn_end
 ```
@@ -87,10 +88,19 @@ All transitions are applied at the `turn_end` boundary, after the tool call comp
 feedback; the round number is **not** increased) · *Stop workflow*.
 
 **Code confirmation dialog** — `select`, titled "Code review passed" with the reviewer's approval note: *Finish workflow* ·
-*Send comments to Code reviewer…* (opens `ctx.ui.editor`; the user's text re-activates the Code reviewer in the same
-round, with the short continuation message that tells it to check the comments and `return` to the Developer if they
-hold; the round number is **not** increased; empty text re-asks the dialog). The reviewer's own `return` after that is
-an ordinary return. There is no *Stop* option: the work is already approved.
+*Send comments to Developer…* (opens `ctx.ui.editor`; the user's text re-activates the Developer in the same
+round, with the short continuation message that says the comments are part of the job and in scope even if the plan
+does not list them; the round number is **not** increased; empty text re-asks the dialog). The Developer's hand-over
+then goes to the Code reviewer in the same round, and the reviewer's own `return` after that is an ordinary return.
+*Commit and finish* is offered only when the baseline is a git baseline: it activates the Committer (Commit stage, no feedback). There is no *Stop* option: the work is already approved.
+
+**Commit message confirmation dialog** — `select`, shown when the Committer hands over the first time (the `advance` is refused
+unless `commit.md` is valid, see §8), with the path of `commit.md` and its subject line: *Approve and commit* (`commit.md` is
+checked again, because the user may have edited it; a problem is shown and the dialog asks again) · *Edit commit message…*
+(the file in `ctx.ui.editor`, written back only when changed, then asks again) · *Send comments to Committer…* (the Committer
+is activated with the comments; empty text re-asks; no round changes) · *Finish without committing* (the workflow ends as
+finished, the note says nothing was committed). After *Approve and commit* the Committer is activated with `approved`
+(`commitApproved` is set) and its next `advance` ends the workflow as finished, its summary being the note.
 
 **Limit dialog** — *Continue* (limit += 1, i.e. one more round; author gets the feedback) · *Accept as is* (Planning: go to plan
 confirmation; Development: finish) · *Stop workflow*.
@@ -108,7 +118,7 @@ Both registered at load with `defaultActive: false`, so a normal session never s
 
 | Tool | Params | Who | Notes |
 |---|---|---|---|
-| `advance` | `summary: string` | all four | Authors: what was done, what to look at, how it was verified. Reviewers: approval note (shown to you at plan confirmation / in the closing banner). Planner's call is rejected with an error message if the plan file is missing or has no `Scope` section. |
+| `advance` | `summary: string` | all five | Authors: what was done, what to look at, how it was verified. Reviewers: approval note (shown to you at plan confirmation / in the closing banner). Planner's call is rejected with an error message if the plan file is missing or has no `Scope` section. The Committer's first call is rejected with an error message if `commit.md` is missing or malformed; its second one (after the approval) ends the workflow, the summary being the closing note. |
 | `return` | `feedback: string` | reviewers only | Required, non-empty, concrete. |
 
 A second call while one is `pending` is rejected. Both are `executionMode: "sequential"`.
@@ -152,9 +162,10 @@ banner, collapsed by default; expandable to read the text).
 | Agent | Briefing includes |
 |---|---|
 | Planner | Mission and plan format (mandatory sections: Assignment — a brief, high-level description in the Planner's own words — **Scope** — in / decisions made with the user — Design, Requirements, How to verify). Plan file path. On a later round: the Plan reviewer's feedback, or your comments from the confirmation dialog; the plan on disk is the current draft. |
-| Plan reviewer | Checklist from the business plan. The plan path, the Planner's `summary` and the path of `conversation.md` (§8): it reads that first and judges the plan against what you and the Planner said, and is told to ask you in the chat when something looks added or missing. When the file could not be written it is told so. On a later round its "Handed over from Planner" message says the file was refreshed. |
-| Developer | Mission: implement the plan, run the project's tests/checks, don't add anything outside the plan. Plan path, git baseline (§8). On a later round: the Code reviewer's feedback. |
-| Code reviewer | Checklist: scope (done and nothing extra), correctness (tests/checks pass — may run them), code quality. Plan path, the Developer's `summary`, git baseline to diff against. |
+| Plan reviewer | Checklist from the business plan. The plan path, the Planner's `summary` and the path of `planning-conversation.md` (§8): it reads that first and judges the plan against what you and the Planner said, and is told to ask you in the chat when something looks added or missing. When the file could not be written it is told so. On a later round its "Handed over from Planner" message says the file was refreshed. |
+| Developer | Mission: implement the plan, run the project's tests/checks, don't add anything outside the plan. Plan path, git baseline (§8). On a later round: the Code reviewer's feedback, or your comments from the code confirmation dialog followed by a fixed text (the comments are part of the job and in scope even if the plan does not list them; ask the user when a comment is unclear; hand over with `advance` as usual). |
+| Committer | Mission: write the commit message to `commit.md` (the file is the message and nothing else; subject, blank line, description), do not commit yet. Plan path, git baseline to diff against (`git diff <head>`, `git status`, recent `git log`; ignore `.pi/dev/`). After your approval: a fixed text — re-read `commit.md`, commit with `git commit -F <path> --cleanup=whitespace`, stage only the Developer's files (the baseline's dirty-file list is a hint only; ask the user when unsure), never push, on failure say so in the chat and `advance` with what was and was not committed. After your comments on the message: change `commit.md`, do not commit, `advance` again. |
+| Code reviewer | Checklist: scope (done and nothing extra), correctness (tests/checks pass — may run them), code quality. Plan path, the Developer's `summary`, git baseline to diff against, and the path of `development-conversation.md` (§8): it reads that first and treats what you asked for in it as in scope even if the plan does not list it. When the file could not be written it is told so and asks you when unsure. On a later round its "Handed over from Developer" message says the file was refreshed and repeats that sentence. |
 
 A fresh agent on a return round gets no memory of its earlier attempt; the work is on disk (plan file, working tree)
 and the feedback is in the briefing (decision from the business plan; keeping the author's context is in `TODO.md`).
@@ -166,7 +177,9 @@ and the feedback is in the briefing (decision from the business plan; keeping th
 | File | Written by | Purpose |
 |---|---|---|
 | `plan.md` | Planner (you may edit) | The plan; read by everyone downstream |
-| `conversation.md` | the extension | What you and the Planner said (your messages, the Planner's text, your plan-confirmation comments; no thinking, tool calls or tool results, nothing of the Plan reviewer). Rewritten from the session record each time the Plan reviewer is activated; read by the Plan reviewer only |
+| `commit.md` | Committer (you may edit) | The commit message, committed verbatim: a subject line (starts with an upper-case letter), a blank line, then the description (Markdown, mermaid diagrams welcome). Never committed itself: nothing under `.pi/dev/` is |
+| `planning-conversation.md` | the extension | What you and the Planner said (your messages, the Planner's text, your plan-confirmation comments; no thinking, tool calls or tool results, nothing of the Plan reviewer). Rewritten from the session record each time the Plan reviewer is activated; read by the Plan reviewer only |
+| `development-conversation.md` | the extension | What you and the Developer said (your messages, the Developer's text, your code-confirmation comments; no thinking, tool calls or tool results, nothing of the Code reviewer). Rewritten from the session record each time the Code reviewer is activated; read by the Code reviewer only |
 
 Git baseline: when development starts, record `HEAD` and whether the tree was dirty (via `pi.exec("git", …)`); the
 Code reviewer diffs against it. Not a git repo → the briefing falls back to the Developer's `summary` and file list.
@@ -174,7 +187,8 @@ Code reviewer diffs against it. Not a git repo → the briefing falls back to th
 ## 9. UI
 
 **Bottom bar** — `setWidget("dev-workflow", factory, { placement: "belowEditor" })`; a component that renders
-from the state and is re-rendered via `tui.requestRender()` after each change. Two bordered groups, one per stage:
+from the state and is re-rendered via `tui.requestRender()` after each change. Two bordered groups, one per stage (a third, `Commit`, with
+the Committer alone and no round counter, while the Commit stage runs; all boxes share one width):
 
 ```
 ╭─ Planning · round 2/3 ─────────────╮ ╭─ Development ──────────────────────╮

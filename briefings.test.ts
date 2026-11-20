@@ -7,7 +7,12 @@ const base = (patch: Partial<BriefingInput>): BriefingInput => ({
 	round: 1,
 	roundLimit: 3,
 	planPath: "/p/.pi/dev/0001/plan.md",
+	commitPath: "/p/.pi/dev/0001/commit.md",
 	...patch,
+});
+
+test("title: the Committer's has no round counter", () => {
+	assert.equal(briefingTitle("committer", 1, 1), "Commit · Committer");
 });
 
 test("title: stage · agent · round", () => {
@@ -81,10 +86,13 @@ test("Planner, first round: starts from the user's first message, no greeting; m
 
 test("Plan reviewer: gets the plan, the summary and the conversation file; judges the plan against the conversation; may ask the user", () => {
 	const text = buildBriefing(
-		base({ agent: "plan-reviewer", summary: "plan covers X and Y", conversationPath: "/p/.pi/dev/0001/conversation.md" }),
+		base({ agent: "plan-reviewer", summary: "plan covers X and Y", conversationPath: "/p/.pi/dev/0001/planning-conversation.md" }),
 	);
 	assert.match(text, /plan covers X and Y/);
-	assert.match(text, /conversation between the user and the Planner is in `\/p\/\.pi\/dev\/0001\/conversation\.md`\. Read it first/);
+	assert.match(
+		text,
+		/conversation between the user and the Planner is in `\/p\/\.pi\/dev\/0001\/planning-conversation\.md`\. Read it first/,
+	);
 	assert.doesNotMatch(text, /Questions and answers/);
 	assert.doesNotMatch(text, /verbatim/);
 	assert.doesNotMatch(text, /No conversation file is available/);
@@ -103,8 +111,29 @@ test("Plan reviewer without a conversation file: says none is available and does
 	assert.match(text, /ask the user/);
 });
 
-test("only the Plan reviewer is given the conversation path", () => {
-	for (const agent of ["planner", "developer", "code-reviewer"] as const) {
+test("Code reviewer: gets the development conversation file and treats the user's requests in it as in scope", () => {
+	const path = "/p/.pi/dev/0001/development-conversation.md";
+	const text = buildBriefing(base({ agent: "code-reviewer", summary: "built it", conversationPath: path }));
+	assert.match(
+		text,
+		/conversation between the user and the Developer is in `\/p\/\.pi\/dev\/0001\/development-conversation\.md`\. Read it first/,
+	);
+	assert.match(text, /Anything the user asked for there counts as in scope, even if the plan does not list it/);
+	assert.match(text, /not an extra change and not a reason to `return`/);
+	assert.doesNotMatch(text, /No conversation file is available/);
+	assert.doesNotMatch(text, /planning-conversation/);
+});
+
+test("Code reviewer without a conversation file: says none is available, does not name a path, asks the user when unsure", () => {
+	const text = buildBriefing(base({ agent: "code-reviewer", summary: "built it" }));
+	assert.match(text, /No conversation file is available/);
+	assert.doesNotMatch(text, /conversation\.md/);
+	assert.doesNotMatch(text, /counts as in scope/);
+	assert.match(text, /ask the user when you are unsure/);
+});
+
+test("only the reviewers are given a conversation path", () => {
+	for (const agent of ["planner", "developer"] as const) {
 		assert.doesNotMatch(buildBriefing(base({ agent })), /conversation\.md|conversation file/, agent);
 	}
 });
@@ -192,7 +221,7 @@ test("Plan reviewer handed the plan again: the title line and one sentence, noth
 });
 
 test("Plan reviewer handed the plan again: the line about the refreshed conversation file only when a path is given", () => {
-	const path = "/p/.pi/dev/0001/conversation.md";
+	const path = "/p/.pi/dev/0001/planning-conversation.md";
 	assert.equal(
 		buildBriefing(base({ agent: "plan-reviewer", round: 2, resumed: true, summary: "plan revised", conversationPath: path })),
 		`# Planning · Plan reviewer · round 2/3\n\nHanded over from Planner: plan revised\n\nThe conversation between the user and the Planner was refreshed; read it again: \`${path}\``,
@@ -214,6 +243,16 @@ test("Code reviewer handed the work again: the title line and one sentence, noth
 	for (const part of NOT_A_BRIEFING) assert.ok(!text.includes(part), part);
 	assert.doesNotMatch(text, /abc123/);
 	assert.doesNotMatch(text, /may have been edited by the user/);
+});
+
+test("Code reviewer handed the work again: the refreshed development file and the user-requests sentence, only when a path is given", () => {
+	const path = "/p/.pi/dev/0001/development-conversation.md";
+	const text = buildBriefing(base({ agent: "code-reviewer", round: 2, resumed: true, summary: "added the check", conversationPath: path }));
+	assert.equal(
+		text,
+		`# Development · Code reviewer · round 2/3\n\nHanded over from Developer: added the check\n\nThe conversation between the user and the Developer was refreshed; read it again: \`${path}\`\n\nAnything the user asked for there counts as in scope, even if the plan does not list it: it is not an extra change and not a reason to \`return\`.`,
+	);
+	assert.doesNotMatch(buildBriefing(base({ agent: "code-reviewer", round: 2, resumed: true, summary: "x" })), /conversation|in scope/);
 });
 
 test("a hand-over without a note reads `(none)`", () => {
@@ -242,20 +281,22 @@ test("the user's comments stay verbatim, line breaks included; the fixed sentenc
 	assert.equal(text, `# Planning · Planner · round 1/3\n\nReturned from the user: first\n\nsecond\n\n${FIXED_SENTENCE}`);
 });
 
-test("Code reviewer given the user's comments: the comments verbatim, then the instruction to check them and return to the Developer", () => {
+test("Developer given the user's comments: the comments verbatim, then the fixed text", () => {
 	const text = buildBriefing(
 		base({
-			agent: "code-reviewer",
+			agent: "developer",
 			round: 2,
 			resumed: true,
-			feedback: { from: "user", text: "the null check\n\nis still missing" },
+			feedback: { from: "user", text: "rename it\n\nto hello.txt" },
 			baseline: { git: true, head: "abc123", dirtyFiles: [] },
 		}),
 	);
-	assert.match(text, /^# Development · Code reviewer · round 2\/3\n\nReturned from the user: the null check\n\nis still missing\n\n/);
-	assert.match(text, /Check each comment in the code/);
-	assert.match(text, /`return` to the Developer with concrete, actionable feedback/);
-	assert.match(text, /`advance` only when no issue is open/);
+	assert.match(text, /^# Development · Developer · round 2\/3\n\nReturned from the user: rename it\n\nto hello\.txt\n\n/);
+	assert.match(text, /part of the job and in scope even if the plan does not list them/);
+	assert.match(text, /overrides "do not add anything outside the plan" in your first briefing/);
+	assert.match(text, /If a comment is unclear, ask the user in the chat/);
+	assert.match(text, /hand over with `advance` and a summary, as usual/);
+	assert.doesNotMatch(text, /Check each comment/);
 	assert.doesNotMatch(text, /plan file may have been edited/);
 	for (const part of NOT_A_BRIEFING) assert.ok(!text.includes(part), part);
 });
@@ -309,4 +350,73 @@ test("briefingPreview of the Plan reviewer's first briefing: the Planner's hand-
 test("briefingPreview of a continuation: short, nothing hidden, the feedback is shown", () => {
 	const text = buildBriefing(base({ round: 2, resumed: true, feedback: { from: "reviewer", text: "add the word REVIEWED" } }));
 	assert.deepEqual(briefingPreview(text), { shown: "Returned from Plan reviewer: add the word REVIEWED", hidden: 0 });
+});
+
+// ── the Committer ──
+
+const gitBaseline = { git: true as const, head: "abc123", dirtyFiles: ["a.ts", "… and 4 more"] };
+
+test("Committer, first briefing: writes commit.md in the agreed format and does not commit yet", () => {
+	const text = buildBriefing(base({ agent: "committer", baseline: gitBaseline }));
+	assert.match(text, /^# Commit · Committer\n\nYou are the \*\*Committer\*\*\./);
+	assert.ok(text.includes("/p/.pi/dev/0001/commit.md"));
+	assert.ok(text.includes("/p/.pi/dev/0001/plan.md"));
+	assert.match(text, /Baseline commit: `abc123`/);
+	assert.match(text, /git diff abc123/);
+	assert.match(text, /git status/);
+	assert.match(text, /git log/);
+	assert.match(text, /Ignore anything under `\.pi\/dev\/`/);
+	assert.match(text, /file is the commit message and nothing else/);
+	assert.match(text, /subject line, a blank line, then the description/);
+	assert.match(text, /upper-case letter and a present-tense verb/);
+	assert.match(text, /Add a feature X/);
+	assert.match(text, /mermaid diagrams are welcome/);
+	assert.match(text, /Never mention anything that was tried or considered but is not in the final result/);
+	assert.match(text, /Do not commit yet/);
+	assert.doesNotMatch(text, /`return`/);
+});
+
+test("Committer rules: its own hand-over bullet, no `four agents`", () => {
+	const text = buildBriefing(base({ agent: "committer", baseline: gitBaseline }));
+	assert.match(text, /`advance` tool: it tells the workflow that this step is done/);
+	assert.doesNotMatch(text, /submits your work for review/);
+	assert.match(text, /and, when the user asks for a commit, Committer/);
+	for (const agent of AGENTS) {
+		const other = buildBriefing(base({ agent }));
+		assert.doesNotMatch(other, /four agents/, agent);
+		assert.match(other, /submits your work for review|`advance` approves the work/, agent);
+	}
+});
+
+test("Committer after the user's approval: commit with --cleanup=whitespace, only the Developer's files, never push, report failures", () => {
+	const text = buildBriefing(
+		base({ agent: "committer", resumed: true, commitApproved: true, feedback: { from: "user", text: "approved" }, baseline: gitBaseline }),
+	);
+	assert.match(text, /^# Commit · Committer\n\nReturned from the user: approved\n\n/);
+	assert.match(text, /Re-read `\/p\/\.pi\/dev\/0001\/commit\.md`/);
+	assert.match(text, /git commit -F \/p\/\.pi\/dev\/0001\/commit\.md --cleanup=whitespace/);
+	assert.match(text, /Stage only the Developer's files/);
+	assert.match(text, /nothing under `\.pi\/dev\/`/);
+	assert.match(text, /capped at 30/);
+	assert.match(text, /… and N more/);
+	assert.match(text, /treat it as a hint only/);
+	assert.match(text, /git diff abc123/);
+	assert.match(text, /ask the user in the chat/);
+	assert.match(text, /Never push/);
+	assert.match(text, /do not retry blindly/);
+	assert.match(text, /what was and was not committed/);
+	assert.match(text, /commit hash and the subject/);
+	for (const part of NOT_A_BRIEFING) assert.ok(!text.includes(part), part);
+});
+
+test("Committer after the user's comments: the comments verbatim, then: change commit.md, do not commit, advance again", () => {
+	const text = buildBriefing(
+		base({ agent: "committer", resumed: true, feedback: { from: "user", text: "shorter\n\nsubject" }, baseline: gitBaseline }),
+	);
+	assert.match(text, /^# Commit · Committer\n\nReturned from the user: shorter\n\nsubject\n\n/);
+	assert.match(text, /Change `\/p\/\.pi\/dev\/0001\/commit\.md` accordingly; re-read it first/);
+	assert.match(text, /Do not commit\./);
+	assert.match(text, /call `advance` again/);
+	assert.doesNotMatch(text, /--cleanup=whitespace/);
+	assert.doesNotMatch(text, /Never push/);
 });

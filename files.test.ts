@@ -3,7 +3,18 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { allocateRunDir, type Exec, gitBaseline, planPath, planProblem, runsRoot } from "./files.ts";
+import {
+	allocateRunDir,
+	commitMessagePath,
+	commitMessageProblem,
+	developmentConversationPath,
+	type Exec,
+	gitBaseline,
+	planningConversationPath,
+	planPath,
+	planProblem,
+	runsRoot,
+} from "./files.ts";
 
 const tmp = () => mkdtempSync(join(tmpdir(), "dev-workflow-test-"));
 
@@ -90,4 +101,48 @@ test("gitBaseline: not a repository, no commits, or git missing → { git: false
 		}),
 		{ git: false },
 	);
+});
+
+test("the conversation files are named after their stage", () => {
+	assert.equal(planningConversationPath("/p/.pi/dev/0001"), "/p/.pi/dev/0001/planning-conversation.md");
+	assert.equal(developmentConversationPath("/p/.pi/dev/0001"), "/p/.pi/dev/0001/development-conversation.md");
+});
+
+test("commitMessagePath is commit.md in the run folder", () => {
+	assert.equal(commitMessagePath("/p/.pi/dev/0001"), join("/p/.pi/dev/0001", "commit.md"));
+});
+
+test("commitMessageProblem: a missing file, an empty or lower-case subject and a missing description are reported", () => {
+	const cwd = tmp();
+	try {
+		const { dir } = allocateRunDir(cwd);
+		const check = (text: string) => {
+			writeFileSync(commitMessagePath(dir), text);
+			return commitMessageProblem(dir) ?? "";
+		};
+		assert.match(commitMessageProblem(dir) ?? "", /does not exist/);
+		assert.match(check(""), /first line .* is empty/);
+		assert.match(check("\n\nAdd x\n\nBecause."), /first line .* is empty/);
+		assert.match(check("add x\n\nBecause."), /upper-case letter/);
+		assert.match(check("# Add x\n\nBecause."), /upper-case letter/);
+		assert.match(check("Add x\n"), /description/);
+		assert.match(check("Add x\n\n  \n\n"), /description/);
+		assert.match(check("Add x\nBecause."), /blank line/);
+	} finally {
+		rmSync(cwd, { recursive: true, force: true });
+	}
+});
+
+test("commitMessageProblem: a subject, a blank line and a description are fine, Markdown headings in the description too", () => {
+	const cwd = tmp();
+	try {
+		const { dir } = allocateRunDir(cwd);
+		writeFileSync(
+			commitMessagePath(dir),
+			"Add a feature X\n\n## Context\n\nIt works like this.\n\n```mermaid\nflowchart LR\n  A --> B\n```\n",
+		);
+		assert.equal(commitMessageProblem(dir), undefined);
+	} finally {
+		rmSync(cwd, { recursive: true, force: true });
+	}
 });

@@ -1,5 +1,5 @@
 /**
- * dev-workflow — plan → build with four agents, run in the user's current pi session.
+ * dev-workflow — plan → build (and, on request, commit) with up to five agents, run in the user's current pi session.
  *
  *   /dev      start a workflow (or, while one runs, offer to stop it)
  *
@@ -34,11 +34,21 @@ import { type BarUsage, createBar, themeStyle } from "./bar.ts";
 import { buildBriefing } from "./briefings.ts";
 import { agentView, collectFileOps, compactionSettings, planCompaction, summaryMessage, type ViewMessage } from "./compaction.ts";
 import { BRIEFING_TYPE, briefedBefore, END_TYPE, type EntryLike, visibleMessages } from "./context.ts";
-import { type ConversationEntry, planningConversation } from "./conversation.ts";
-import { allocateRunDir, conversationPath, gitBaseline, planPath, planProblem } from "./files.ts";
+import { type ConversationEntry, developmentConversation, planningConversation } from "./conversation.ts";
+import {
+	allocateRunDir,
+	commitMessagePath,
+	commitMessageProblem,
+	developmentConversationPath,
+	gitBaseline,
+	planningConversationPath,
+	planPath,
+	planProblem,
+} from "./files.ts";
 import {
 	AGENT_LABEL,
 	type CodeChoice,
+	type CommitChoice,
 	type Feedback,
 	type HandOff,
 	initialState,
@@ -49,6 +59,7 @@ import {
 	type PlanChoice,
 	parseState,
 	resolveCodeConfirmation,
+	resolveCommitConfirmation,
 	resolvePlanConfirmation,
 	resolveRoundLimit,
 	STAGE_LABEL,
@@ -71,7 +82,12 @@ const EDIT_PLAN = "Edit plan…";
 const SEND_BACK = "Send back to Planner…";
 const STOP = "Stop workflow";
 const FINISH = "Finish workflow";
-const SEND_COMMENTS = "Send comments to Code reviewer…";
+const SEND_COMMENTS = "Send comments to Developer…";
+const COMMIT = "Commit and finish";
+const APPROVE_COMMIT = "Approve and commit";
+const EDIT_COMMIT = "Edit commit message…";
+const SEND_COMMIT_COMMENTS = "Send comments to Committer…";
+const FINISH_WITHOUT_COMMIT = "Finish without committing";
 const CONTINUE = "Continue (one more round)";
 const ACCEPT = "Accept as is";
 
@@ -120,6 +136,7 @@ export default function devWorkflow(pi: ExtensionAPI): void {
 		},
 		siblingCalls: () => lastCalls,
 		planProblem: () => (state ? planProblem(state.dir) : undefined),
+		commitProblem: () => (state?.agent === "committer" && !state.commitApproved ? commitMessageProblem(state.dir) : undefined),
 	});
 	registerBanners(pi);
 
@@ -179,7 +196,15 @@ export default function devWorkflow(pi: ExtensionAPI): void {
 		const details: BriefingDetails = { ...round, ...(extra.feedback?.from === "user" ? { userFeedback: extra.feedback.text } : {}) };
 		return {
 			customType: BRIEFING_TYPE,
-			content: buildBriefing({ ...round, planPath: planPath(s.dir), baseline: s.baseline, ...extra, resumed }),
+			content: buildBriefing({
+				...round,
+				planPath: planPath(s.dir),
+				commitPath: commitMessagePath(s.dir),
+				baseline: s.baseline,
+				commitApproved: s.commitApproved,
+				...extra,
+				resumed,
+			}),
 			display: true,
 			details,
 		};
@@ -317,17 +342,50 @@ export default function devWorkflow(pi: ExtensionAPI): void {
 		}
 	}
 
-	async function askCode(ctx: ExtensionContext, next: Extract<Next, { type: "confirm-code" }>): Promise<CodeChoice> {
+	async function askCode(ctx: ExtensionContext, s: WorkflowState, next: Extract<Next, { type: "confirm-code" }>): Promise<CodeChoice> {
 		const title = `Code review passed\n\nThe Code reviewer approved the work: ${preview(next.note)}`;
+		const options = [FINISH, SEND_COMMENTS, ...(s.baseline?.git === true ? [COMMIT] : [])];
 		for (;;) {
-			switch (await ask(ctx, title, [FINISH, SEND_COMMENTS])) {
+			switch (await ask(ctx, title, options)) {
 				case FINISH:
 					return { kind: "finish" };
+				case COMMIT:
+					return { kind: "commit" };
 				case SEND_COMMENTS: {
-					const comments = (await ctx.ui.editor("Comments for the Code reviewer", ""))?.trim();
+					const comments = (await ctx.ui.editor("Comments for the Developer", ""))?.trim();
 					if (comments) return { kind: "comment", comments };
 					continue; // nothing written → ask again
 				}
+			}
+		}
+	}
+
+	async function askCommit(ctx: ExtensionContext, s: WorkflowState): Promise<CommitChoice> {
+		const path = commitMessagePath(s.dir);
+		let problem: string | undefined;
+		for (;;) {
+			const subject = readFileSync(path, "utf8").split("\n")[0]?.trim() ?? "";
+			const title = `Confirm the commit message\n${path}\n\n${problem ? `${problem}\n\n` : ""}${preview(subject)}`;
+			problem = undefined;
+			switch (await ask(ctx, title, [APPROVE_COMMIT, EDIT_COMMIT, SEND_COMMIT_COMMENTS, FINISH_WITHOUT_COMMIT])) {
+				case APPROVE_COMMIT:
+					// The user may have edited the file: only a valid one is committed.
+					problem = commitMessageProblem(s.dir);
+					if (problem === undefined) return { kind: "approve" };
+					continue; // the reason is shown, ask again
+				case EDIT_COMMIT: {
+					const before = readFileSync(path, "utf8");
+					const after = await ctx.ui.editor("Edit commit message", before);
+					if (after !== undefined && after !== before) writeFileSync(path, after);
+					continue; // ask again
+				}
+				case SEND_COMMIT_COMMENTS: {
+					const comments = (await ctx.ui.editor("Comments for the Committer", ""))?.trim();
+					if (comments) return { kind: "send-back", comments };
+					continue; // nothing written → ask again
+				}
+				case FINISH_WITHOUT_COMMIT:
+					return { kind: "finish" };
 			}
 		}
 	}
@@ -359,7 +417,10 @@ export default function devWorkflow(pi: ExtensionAPI): void {
 					step = resolvePlanConfirmation(step.state, await askPlan(ctx, step.state, next));
 					break;
 				case "confirm-code":
-					step = resolveCodeConfirmation(step.state, await askCode(ctx, next), next.note);
+					step = resolveCodeConfirmation(step.state, await askCode(ctx, step.state, next), next.note);
+					break;
+				case "confirm-commit":
+					step = resolveCommitConfirmation(step.state, await askCommit(ctx, step.state));
 					break;
 				case "round-limit":
 					step = resolveRoundLimit(step.state, next.stage, next.feedback, await askLimit(ctx, step.state, next.stage, next.feedback));
@@ -501,16 +562,18 @@ export default function devWorkflow(pi: ExtensionAPI): void {
 		usage = usage && { ...usage, context: undefined }; // the previous agent's figure is gone at once
 		pi.setActiveTools(toolsFor(entering));
 		refreshBar();
-		// The Plan reviewer reads the planning conversation: the Planner's last message and hand-over are in the branch.
+		// A reviewer reads the conversation of its stage: the author's last message and hand-over are in the branch.
 		let conversation: string | undefined;
-		if (entering.agent === "plan-reviewer") {
-			const file = conversationPath(entering.dir);
+		if (isReviewer(entering.agent)) {
+			const planning = entering.agent === "plan-reviewer";
+			const file = planning ? planningConversationPath(entering.dir) : developmentConversationPath(entering.dir);
+			const text = planning ? planningConversation : developmentConversation;
 			try {
-				writeFileSync(file, planningConversation(ctx.sessionManager.getBranch() as ConversationEntry[], entering.id));
+				writeFileSync(file, text(ctx.sessionManager.getBranch() as ConversationEntry[], entering.id));
 				conversation = file;
 			} catch (error) {
 				ctx.ui.notify(
-					`Could not write the conversation file for the Plan reviewer: ${error instanceof Error ? error.message : String(error)}`,
+					`Could not write the conversation file for the ${AGENT_LABEL[entering.agent]}: ${error instanceof Error ? error.message : String(error)}`,
 					"warning",
 				);
 			}
@@ -565,7 +628,7 @@ export default function devWorkflow(pi: ExtensionAPI): void {
 	}
 
 	pi.registerCommand("dev", {
-		description: "Start the plan → build workflow with four agents (while one runs: stop it)",
+		description: "Start the plan → build workflow with five agents, the Committer only on request (while one runs: stop it)",
 		handler: async (_args, ctx) => {
 			if (ctx.mode !== "tui") {
 				ctx.ui.notify("/dev works in the interactive terminal UI only.", "error");

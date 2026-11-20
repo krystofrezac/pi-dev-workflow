@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { BRIEFING_TYPE, END_TYPE, SUMMARY_TYPE } from "./context.ts";
-import { type ConversationEntry, planningConversation } from "./conversation.ts";
+import { type ConversationEntry, developmentConversation, planningConversation } from "./conversation.ts";
 import { STATE_ENTRY } from "./machine.ts";
 
 // ── entry builders ──
@@ -155,4 +155,85 @@ test("nothing said, or no such workflow: one line saying the conversation is emp
 	assert.match(empty, /^\(The conversation is empty\.\)$/);
 	assert.equal(planningConversation([planner, user("x")], "0001"), empty);
 	assert.equal(planningConversation([state("0002"), planner, user("x")], "0001"), empty);
+});
+
+// ── development conversation ──
+
+const developer = marker(BRIEFING_TYPE, "developer");
+const codeReviewer = marker(BRIEFING_TYPE, "code-reviewer");
+
+test("development: the user's messages, the Developer's text and the code-confirmation comments, in order", () => {
+	const entries = [
+		state("0001"),
+		planner,
+		user("planning request"),
+		assistant(text("plan written")),
+		developer,
+		user("use tabs please"),
+		assistant(text("Using tabs.")),
+		codeReviewer,
+		marker(BRIEFING_TYPE, "developer", { userFeedback: "also rename it" }),
+		assistant(text("Renamed.")),
+	];
+	assert.equal(
+		developmentConversation(entries, "0001"),
+		"## User\n\nuse tabs please\n\n## Developer\n\nUsing tabs.\n\n## User (code confirmation)\n\nalso rename it\n\n## Developer\n\nRenamed.\n",
+	);
+});
+
+test("development: the Planner, the reviewers, thinking, tool calls and tool results are left out", () => {
+	const entries = [
+		state("0001"),
+		planner,
+		assistant(text("planner text")),
+		reviewer,
+		assistant(text("plan reviewer text")),
+		developer,
+		user("go"),
+		assistant({ type: "thinking", thinking: "secret thoughts" }, text("Reading the code."), {
+			type: "toolCall",
+			name: "bash",
+			arguments: { command: "ls" },
+		}),
+		{ type: "message", message: { role: "toolResult", content: [text("tool output")] } },
+		codeReviewer,
+		assistant(text("code reviewer text")),
+		marker(BRIEFING_TYPE, "developer", { feedback: "a reviewer's feedback" }),
+		assistant(text("Fixed.")),
+	];
+	const result = developmentConversation(entries, "0001");
+	assert.equal(result, "## User\n\ngo\n\n## Developer\n\nReading the code.\n\n## Developer\n\nFixed.\n");
+	for (const hidden of [
+		"planner text",
+		"plan reviewer text",
+		"code reviewer text",
+		"secret thoughts",
+		"bash",
+		"tool output",
+		"reviewer's feedback",
+	]) {
+		assert.ok(!result.includes(hidden), hidden);
+	}
+});
+
+test("development: a Developer segment that starts at a summary is included; the closing note ends a segment", () => {
+	const entries = [
+		state("0001"),
+		developer,
+		user("request"),
+		marker(SUMMARY_TYPE, "developer"),
+		assistant(text("after the summary")),
+		marker(SUMMARY_TYPE, "code-reviewer"),
+		assistant(text("reviewer text")),
+		{ type: "custom_message", customType: END_TYPE } as ConversationEntry,
+		user("chat after the workflow"),
+	];
+	assert.equal(developmentConversation(entries, "0001"), "## User\n\nrequest\n\n## Developer\n\nafter the summary\n");
+});
+
+test("development: nothing said, or no such workflow: one line saying the conversation is empty", () => {
+	const empty = developmentConversation([state("0001"), developer, assistant({ type: "toolCall", name: "bash" })], "0001");
+	assert.match(empty, /^\(The conversation is empty\.\)$/);
+	assert.equal(developmentConversation([developer, user("x")], "0001"), empty);
+	assert.equal(developmentConversation([state("0002"), developer, user("x")], "0001"), empty);
 });

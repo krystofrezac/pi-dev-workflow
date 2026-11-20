@@ -1,11 +1,14 @@
 /**
- * Bottom bar: two bordered groups, one per stage, each with its two agents, and two figures to the right of them:
+ * Bottom bar: bordered groups, one per stage, each with its agents (two boxes; a third, with the Committer alone, while
+ * the Commit stage runs), and two figures to the right of them:
  * how full the active agent's context is (top row, absent until that agent has answered) and what the whole
  * workflow has cost (middle row).
  *
  *   ╭─ Planning · round 2/3 ──────────╮ ╭─ Development · not started ─────╮  agent ctx 1.2k/200k · 1%
  *   │ ✓ Planner   ▶ Plan reviewer     │ │   Developer   Code reviewer     │  workflow $0.087
  *   ╰─────────────────────────────────╯ ╰─────────────────────────────────╯
+ *
+ * All boxes share one width, the widest natural one.
  *
  * Where the figures do not fit to the right (a narrow terminal), they go on one extra row below the bar, joined
  * with ` │ ` (`agent ctx 1.2k/200k · 1% │ workflow $0.087`); the collapsed one-line bar gets that row too.
@@ -88,20 +91,24 @@ function markOf(view: BarView, agent: Agent): Mark {
 
 const GLYPH: Record<Mark, string> = { active: "▶", done: "✓", waiting: " " };
 const cellText = (mark: Mark, agent: Agent) => `${GLYPH[mark]} ${AGENT_LABEL[agent]}`;
-const GAP = 3; // spaces between the two agents of a stage
+const GAP = 3; // spaces between the agents of a stage
+
+/** The stages the bar draws: Planning and Development, and Commit while it runs. */
+const stagesOf = (view: BarView): Stage[] => (stageOf(view.agent) === "commit" ? [...STAGES] : STAGES.filter((s) => s !== "commit"));
 
 function titleOf(view: BarView, stage: Stage): string {
 	const current = STAGES.indexOf(stageOf(view.agent));
 	const own = STAGES.indexOf(stage);
 	if (own < current) return `${STAGE_LABEL[stage]} · done`;
 	if (own > current) return `${STAGE_LABEL[stage]} · not started`;
+	if (stage === "commit") return STAGE_LABEL[stage]; // no rounds in this stage
 	return `${STAGE_LABEL[stage]} · round ${view.round[stage]}/${view.roundLimit[stage]}`;
 }
 
 /** Natural width of a stage box (border included). */
 function naturalWidth(view: BarView, stage: Stage): number {
-	const [a, b] = agentsOf(stage);
-	const content = 1 + cellText("done", a).length + GAP + cellText("done", b).length + 1;
+	const cells = agentsOf(stage).map((agent) => cellText("done", agent).length);
+	const content = 1 + cells.reduce((sum, n) => sum + n, 0) + GAP * (cells.length - 1) + 1;
 	return Math.max(content + 2, titleOf(view, stage).length + 6);
 }
 
@@ -115,25 +122,27 @@ function box(view: BarView, stage: Stage, width: number, style: BarStyle): [stri
 	});
 
 	const inner = width - 2;
-	const used = 1 + cells[0].text.length + GAP + cells[1].text.length;
+	const used = 1 + cells.reduce((sum, c) => sum + c.text.length, 0) + GAP * (cells.length - 1);
+	const row = cells.map((c) => c.paint(c.text)).join(" ".repeat(GAP));
 	const top = `${border("╭─ ")}${border(title)} ${border(`${"─".repeat(width - title.length - 5)}╮`)}`;
-	const middle = `${border("│")} ${cells[0].paint(cells[0].text)}${" ".repeat(GAP)}${cells[1].paint(cells[1].text)}${" ".repeat(inner - used)}${border("│")}`;
+	const middle = `${border("│")} ${row}${" ".repeat(inner - used)}${border("│")}`;
 	const bottom = border(`╰${"─".repeat(inner)}╯`);
 	return [top, middle, bottom];
 }
 
-/** Collapsed form for narrow terminals: `Planning 2/3 · ▶ Plan reviewer`. */
+/** Collapsed form for narrow terminals: `Planning 2/3 · ▶ Plan reviewer`, `Commit · ▶ Committer`. */
 function oneLine(view: BarView, width: number, style: BarStyle): string[] {
 	const stage = stageOf(view.agent);
-	const text = `${STAGE_LABEL[stage]} ${view.round[stage]}/${view.roundLimit[stage]} · ▶ ${AGENT_LABEL[view.agent]}`;
+	const counter = stage === "commit" ? "" : ` ${view.round[stage]}/${view.roundLimit[stage]}`;
+	const text = `${STAGE_LABEL[stage]}${counter} · ▶ ${AGENT_LABEL[view.agent]}`;
 	const chars = [...text];
 	const fitted = chars.length > width ? `${chars.slice(0, Math.max(0, width - 1)).join("")}…` : text;
 	return [style.active(fitted)];
 }
 
-function twoBoxes(view: BarView, boxWidth: number, style: BarStyle): string[] {
-	const [left, right] = STAGES.map((stage) => box(view, stage, boxWidth, style));
-	return [0, 1, 2].map((row) => `${left[row]} ${right[row]}`);
+function boxes(view: BarView, stages: Stage[], boxWidth: number, style: BarStyle): string[] {
+	const drawn = stages.map((stage) => box(view, stage, boxWidth, style));
+	return [0, 1, 2].map((row) => drawn.map((b) => b[row]).join(" "));
 }
 
 /** A run of text and how to paint it. The text is laid out first, the painting happens when a row is put together. */
@@ -183,10 +192,11 @@ function itemsRow(items: { context?: Piece[]; workflow: Piece[] }, width: number
  * middle row, which it keeps while the context is absent) when they fit there, else on one extra row below.
  */
 export function renderBar(view: BarView, width: number, style: BarStyle = plainStyle, usage?: BarUsage): string[] {
-	const boxWidth = Math.max(...STAGES.map((stage) => naturalWidth(view, stage)));
-	const boxesWidth = boxWidth * 2 + 1;
+	const stages = stagesOf(view);
+	const boxWidth = Math.max(...stages.map((stage) => naturalWidth(view, stage)));
+	const boxesWidth = boxWidth * stages.length + (stages.length - 1);
 	const collapsed = boxesWidth > width;
-	const rows = collapsed ? oneLine(view, width, style) : twoBoxes(view, boxWidth, style);
+	const rows = collapsed ? oneLine(view, width, style) : boxes(view, stages, boxWidth, style);
 	if (!usage) return rows;
 
 	const items = itemsOf(usage, style);

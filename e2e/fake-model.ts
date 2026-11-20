@@ -3,8 +3,9 @@
  *
  *   npm run e2e [-- scenario ...]     (`real` is opt-in: E2E_REAL_MODEL)
  *
- * It reads the real briefings it is sent (`# Planning · Planner · round 1/3`, …) and behaves like a very obedient
- * agent. The plan path comes from the agent's first briefing, the agent and the round from its newest one. Every
+ * It reads the real briefings it is sent (`# Planning · Planner · round 1/3`, `# Commit · Committer`, …) and behaves like a
+ * very obedient agent. The plan path comes from the agent's first briefing, the agent and the round (the Committer has
+ * none) from its newest one. Every
  * request is appended to E2E_LOG exactly as received — that is what a provider would have seen. A request to summarise
  * an agent's context (its system prompt starts with `You are a context summarization assistant`) is answered with a
  * fixed short summary and logged with `summary: true` and the full text of its user message.
@@ -50,7 +51,7 @@ const text = (m: Message): string =>
 		? m.content
 		: (m.content ?? []).map((b) => (b.type === "text" ? b.text : b.type === "toolCall" ? `<call ${b.name}>` : "")).join("");
 
-const HEAD = /^# (Planning|Development) · ([\w ]+) · round (\d+)\/(\d+)/;
+const HEAD = /^# (Planning|Development|Commit) · ([A-Za-z ]+?)(?: · round (\d+)\/(\d+))?(?:\n|$)/;
 
 const SUMMARY_REQUEST = "You are a context summarization assistant";
 
@@ -85,7 +86,7 @@ function brain(context: TranscriptContext) {
 	const head = HEAD.exec(body);
 	if (!head) throw new Error(`not a briefing: ${body.slice(0, 80)}`);
 	const [, , agentLabel, roundText] = head;
-	const round = Number(roundText);
+	const round = Number(roundText ?? 1);
 	// Every briefing in a request belongs to one agent; only its first one names the plan file.
 	const planPath = /`(\/[^`]*plan\.md)`/.exec(text(briefings[0].m))?.[1] ?? "";
 	// A re-activation message is the title line, a blank line, then `Returned from <label>: …` (`<label>` is
@@ -148,13 +149,44 @@ function brain(context: TranscriptContext) {
 				return call(fauxToolCall("write", { path: `${repo}/hello.txt`, content: round === 1 ? "hello\n" : "hello\nworld\n" }));
 			if (turns === 1) return call(fauxToolCall("advance", { summary: "implemented hello.txt" }));
 			break;
-		case "Code reviewer":
-			// The user's comments (the title line, `Returned from the user: <comments>`, the instruction):
-			// the first line of the comments is checked and returned.
-			if (returned !== null) {
-				if (turns === 0) return call(fauxToolCall("return", { feedback: `the user's comment holds: ${returned[1].split("\n")[0]}` }));
-				break;
+		case "Committer": {
+			// The first briefing asks for commit.md; after the user's comments it is rewritten; after the approval the work is committed.
+			const commitPath = `${runDir}/commit.md`;
+			const approved = returned?.[1].startsWith("approved\n\n") ?? false;
+			if (approved) {
+				if (turns === 0) {
+					const git = "git -c user.email=e2e@example.com -c user.name=e2e";
+					return call(
+						fauxToolCall("bash", { command: `cd ${repo} && git add hello.txt && ${git} commit -q -F ${commitPath} --cleanup=whitespace` }),
+					);
+				}
+				if (turns === 1) return call(fauxToolCall("advance", { summary: "committed: Add a hello file" }));
+			} else if (returned) {
+				if (turns === 0) {
+					const said = returned[1].split("\n")[0];
+					return call(
+						fauxToolCall("write", {
+							path: commitPath,
+							content: `Add a hello file\n\n## Details\n\nRevised after the comments: ${said}\n`,
+						}),
+					);
+				}
+				if (turns === 1) return call(fauxToolCall("advance", { summary: "message revised" }));
+			} else {
+				if (turns === 0) return call(fauxToolCall("advance", { summary: "message drafted" })); // no commit.md yet: must be rejected
+				if (turns === 1) {
+					return call(
+						fauxToolCall("write", {
+							path: commitPath,
+							content: "Add a hello file\n\n## Details\n\nAdds hello.txt in the project root.\n",
+						}),
+					);
+				}
+				if (turns === 2) return call(fauxToolCall("advance", { summary: "message drafted" }));
 			}
+			break;
+		}
+		case "Code reviewer":
 			if (turns === 0) {
 				return call(
 					round < CODE_APPROVE_ROUND

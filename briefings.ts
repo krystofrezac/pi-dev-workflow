@@ -6,6 +6,7 @@
  */
 
 import { codeReviewer } from "./prompts/code-reviewer.ts";
+import { committer } from "./prompts/committer.ts";
 import { continuation } from "./prompts/continuation.ts";
 import { developer } from "./prompts/developer.ts";
 import { planReviewer } from "./prompts/plan-reviewer.ts";
@@ -27,6 +28,8 @@ export function buildBriefing(input: BriefingInput): string {
 			return developer(input);
 		case "code-reviewer":
 			return codeReviewer(input);
+		case "committer":
+			return committer(input);
 	}
 }
 

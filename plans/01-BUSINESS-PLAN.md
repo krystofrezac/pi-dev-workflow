@@ -1,7 +1,8 @@
 # dev-workflow — business plan
 
 A simpler sibling of `pi-workflow`. One fixed development workflow, started with `/dev`,
-where four agents hand work to each other and you talk directly to whichever one is active.
+where four agents hand work to each other (and a fifth, the Committer, when you ask for a commit)
+and you talk directly to whichever one is active.
 
 ## Problem
 
@@ -63,9 +64,19 @@ Planner asks follow-up questions in the same chat.
    It either calls `advance` (approves) or `return` (sends the work back to the Developer with
    concrete feedback). The Developer fixes it, calls `advance` again, and the loop repeats.
 3. **Done.** When the Code reviewer calls `advance`, you are asked to confirm: finish the
-   workflow, or send comments to the Code reviewer. The Code reviewer checks your comments in the
-   code and, where they hold, returns the work to the Developer with concrete feedback; if it
-   approves again, you are asked again.
+   workflow, send comments to the Developer, or — in a git project — commit and finish. The
+   Developer implements your comments, which count as part of the job even when the plan does not
+   list them; then the Code reviewer reviews again, and if it approves, you are asked again.
+4. **Committer** (only when you choose "Commit and finish"). A fresh agent looks at what the
+   Developer changed and drafts a commit message in a file, `commit.md`: a short subject line
+   (an upper-case present-tense verb, such as "Add a feature X"), then a description for the
+   reviewers of the merge request — what changed, how it works and how the pieces interact,
+   with diagrams where they help. You review the file, edit it in the editor, send comments to
+   the Committer or approve it; you can also finish without committing. Nothing is committed
+   before you approve. After the approval the Committer commits the Developer's work only — not
+   files that were already modified before development started, and nothing in the workflow's
+   own folder — and the workflow finishes. It never pushes. If the commit fails, the Committer
+   tells you and the workflow still finishes, with a note on what was and was not committed.
 
 The Code reviewer can only send work back to the Developer. It never reopens Planning; if it
 believes the plan itself is wrong, it says so in its feedback and you decide what to do.
@@ -85,10 +96,12 @@ believes the plan itself is wrong, it says so in its feedback and you decide wha
   **not** handed over; the workflow keeps waiting.
 - **Every agent starts with a clean context.** It receives only what it needs — the plan, the
   reviewer's latest feedback, and the current state of the project files — not the previous
-  agent's conversation. The one exception is the Plan reviewer, which also gets the conversation
-  between you and the Planner (what you and the Planner said, not the Planner's thinking or tool
-  calls), so it can check the plan against what you actually asked and decided. This keeps
-  reviewers independent of the author's reasoning. The earlier conversations stay visible in the chat for you to scroll back to.
+  agent's conversation. The exception is the reviewers: each gets the conversation between you and
+  the author of its stage (what you and the Planner, or you and the Developer, said — not the
+  author's thinking or tool calls). The Plan reviewer uses it to check the plan against what you
+  actually asked and decided; the Code reviewer uses it to see what you asked the Developer for
+  directly, including your comments at the final confirmation, so it does not reject your own
+  requests as "not in the plan". This keeps reviewers independent of the author's reasoning. The earlier conversations stay visible in the chat for you to scroll back to.
 - **The plan is a document**, saved as a file in the project, that you can read and edit. It has
   a brief **Assignment** (the goal, in the Planner's words) and a mandatory **Scope** section (what is in, and the decisions you made). Both
   reviewers judge against it; the Planner's job is to get it right. The Plan reviewer checks the
@@ -105,8 +118,9 @@ believes the plan itself is wrong, it says so in its feedback and you decide wha
 A **round** is one hand-over to a reviewer and the reviewer's answer. Each stage counts its own
 rounds. After **3 rounds** without approval, the workflow stops and asks you what to do:
 let the loop continue for **one more round**, accept the current result as it is, or stop the
-workflow. Changes you request at the plan confirmation, and comments you send to the Code reviewer
-at the final confirmation, do not count as a round.
+workflow. Changes you request at the plan confirmation, and comments you send to the Developer
+at the final confirmation, do not count as a round. The commit step has no reviewer and so no
+rounds: you are its reviewer, and your comments on the commit message never count as a round.
 
 ## What you see
 
@@ -119,7 +133,8 @@ place.
 ### At the bottom of the session
 
 Four boxes, one per agent, grouped by stage (visually bordered together). Each stage shows its
-current round:
+current round. While the Committer runs, a third box, "Commit" with the one agent and no round
+counter, joins them and the other two read "done":
 
 ```
 ╭─ Planning · round 2/3 ───────────────────╮  ╭─ Development · not started ─────────────╮
@@ -132,7 +147,8 @@ current round:
 - **Waiting agent** (not reached yet) — muted.
 - The highlight moves back and forth as work is returned, and the round counter goes up.
 
-The display is visible for the whole workflow and disappears when it ends.
+Without a commit step the bar looks as above for the whole workflow. The display disappears when
+the workflow ends.
 
 ## Starting, stopping, and edge cases
 

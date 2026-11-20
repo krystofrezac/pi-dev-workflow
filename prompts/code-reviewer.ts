@@ -1,11 +1,11 @@
-/** The Code reviewer's first briefing. Sections: Mission, the Developer's hand-over note, Git baseline, Checklist, Role, How this workflow works. */
+/** The Code reviewer's first briefing. Sections: Mission, the Developer's hand-over note, the conversation, Git baseline, Checklist, Role, How this workflow works. */
 
-import { type BriefingInput, baselineText, header, NO_OPEN_ISSUES, rules, section } from "./shared.ts";
+import { type BriefingInput, baselineText, header, NO_OPEN_ISSUES, rules, section, USER_REQUESTS_IN_SCOPE } from "./shared.ts";
 
 export function codeReviewer(input: BriefingInput): string {
 	const checklist = `Review the result critically against the plan — you are the independent check on the Developer:
 
-1. **Scope** — is every requirement in the plan's \`Requirements\` met, and is nothing extra added (the plan's \`In\` is the whole job)? Check that every test listed in the plan's \`Requirements\` exists in the code; a missing listed test is an issue to \`return\`. Where the plan says nothing is testable, there is no list to check.
+1. **Scope** — is every requirement in the plan's \`Requirements\` met, and is nothing extra added (the plan's \`In\` plus what the user asked for in the conversation is the whole job)? Check that every test listed in the plan's \`Requirements\` exists in the code; a missing listed test is an issue to \`return\`. Where the plan says nothing is testable, there is no list to check.
 2. **Correctness** — does it work? Read the code for bugs and unhandled edge cases. You may run the tests and checks (see \`How to verify\` in the plan) — do run them.
 3. **Code quality** — readable, consistent with the surrounding codebase, no needless complexity or dead code.`;
 
@@ -13,6 +13,10 @@ export function codeReviewer(input: BriefingInput): string {
 		input.baseline?.git === true
 			? `To see what changed, run \`git diff ${input.baseline.head}\` and \`git status\` (the diff does not show new untracked files). Ignore anything under \`.pi/dev/\`; that is the workflow's own folder.`
 			: "There is no git baseline; rely on the Developer's note and read the files it names.";
+
+	const conversation = input.conversationPath
+		? `The conversation between the user and the Developer is in \`${input.conversationPath}\`. Read it first. ${USER_REQUESTS_IN_SCOPE}`
+		: "No conversation file is available (it could not be written). Judge the work against the plan, and ask the user when you are unsure whether a change was asked for.";
 
 	const role = `- You review; you do not fix. Do not edit the code or the plan. Report problems instead.
 - The plan gives intent and interfaces, not code. Judge behaviour, interfaces and scope against the plan, and the implementation details against the codebase's conventions.
@@ -26,6 +30,7 @@ ${NO_OPEN_ISSUES}
 		header(input, "Code reviewer"),
 		section("Mission", `Review the Developer's work against the plan at \`${input.planPath}\`.`),
 		section("The Developer's hand-over note", input.summary ?? "(none)"),
+		section("The conversation", conversation),
 		section("Git baseline", `${baselineText(input.baseline)}\n\n${diff}`),
 		section("Checklist", checklist),
 		section("Role", role),
