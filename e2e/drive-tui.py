@@ -13,12 +13,12 @@ node_modules. The fake-model scenarios run pi with their own empty agent directo
 on your pi config; `real` keeps your agent directory, because it needs your credentials.
 
 Scenarios (default: all)
-    full        /dev (no model request until your first message) → Planner ⇄ Plan reviewer → confirmation (Esc asks again, edit, approve)
-                → Developer ⇄ Code reviewer → code confirmation (Esc asks again, comments go to the Developer, whose hand-over goes to the Code
+    full        /dev (no model request until your first message) → Planner ⇄ Plan reviewer → confirmation (Esc is ignored, edit, approve)
+                → Developer ⇄ Code reviewer → code confirmation (Esc is ignored, comments go to the Developer, whose hand-over goes to the Code
                 reviewer again; the next approval → Finish workflow) → done; an agent activated again sees its own earlier conversation,
                 nothing of another agent's
     stop        /dev while the Planner waits for your first message → Cancel / Stop; Stop from the plan confirmation
-    limit       planning round limit: Esc asks again, Continue, Accept as is, send back, Stop
+    limit       planning round limit: Esc is ignored, Continue, Accept as is, send back, Stop
     abort       Esc interrupts the turn only; /dev → Stop while an agent is running aborts it, then ends the workflow
     real        (opt-in, costs a few cents) the same flow with a real model: E2E_REAL_MODEL, default github-copilot/claude-haiku-5.5
     resume      quit pi mid-workflow (after the first message), restart with --continue → state, bar and tools restored
@@ -31,6 +31,8 @@ Scenarios (default: all)
                 (an edit that breaks the subject is refused with the reason, comments go to the Committer, a valid edit is what gets committed)
                 → approve → one new commit with the Developer's file only; a second run finishes without committing, a third (no git
                 repository) is not offered "Commit and finish"
+    quit        Ctrl+C quits pi from a dialog: Esc leaves the plan confirmation open, Ctrl+C ends the process; in the "Comments for the
+                Planner" editor Esc returns to the confirmation, Ctrl+C ends the process; after each a restart (--continue) shows the same state
     waiting     while the Planner waits for an answer pi reports `blocked` (OSC 7501), the editor still takes typing, the answer reports
                 `working`; Stop while it waits clears `blocked`
 
@@ -180,6 +182,19 @@ class Tui:
         """Text of every dev-briefing message in the session, in order."""
         return [e["content"] for e in self.entries() if e.get("type") == "custom_message" and e.get("customType") == "dev-briefing"]
 
+    def exited(self, timeout=10):
+        """True once the pi process is gone (reaped here); polls the process, not the screen."""
+        end = time.time() + timeout
+        while time.time() < end:
+            self.pump(0.3)
+            try:
+                pid, _ = os.waitpid(self.pid, os.WNOHANG)
+            except ChildProcessError:
+                return True
+            if pid:
+                return True
+        return False
+
     def close(self):
         for _ in range(2):
             try:
@@ -316,11 +331,11 @@ def full():
     check("the bar's top row shows the active agent's context: `agent ctx …/128k`", rows and "agent ctx" in rows[0] and "/128k" in rows[0], rows)
     check("…and the middle row the workflow's cost: `workflow no price` (the fake model has no prices)", rows and "workflow no price" in rows[1], rows)
 
-    # Esc dismisses the dialog; it is asked again, however often (three dismissals in a row used to count as Stop)
+    # Esc does nothing in a select dialog: it stays open, however often it is pressed
     for _ in range(3):
         t.send("\x1b", 1.0)
     s = t.text()
-    check("Esc on the plan confirmation (three times) asks it again and does not stop the workflow", "Confirm the plan" in s and "Workflow stopped" not in s, s[-800:])
+    check("Esc on the plan confirmation (three times) leaves the dialog open and does not stop the workflow", "Confirm the plan" in s and "Workflow stopped" not in s, s[-800:])
     # Edit plan… (2nd option) → editor → append text → Enter → asked again → Approve
     t.send(DOWN)
     t.send(ENTER, 1.0)
@@ -347,7 +362,7 @@ def full():
     for _ in range(3):
         t.send("\x1b", 1.0)
     s = t.text()
-    check("Esc on the code confirmation (three times) asks it again and does not end the workflow", "Code review passed" in s and "Workflow finished" not in s and "Workflow stopped" not in s, s[-800:])
+    check("Esc on the code confirmation (three times) leaves the dialog open and does not end the workflow", "Code review passed" in s and "Workflow finished" not in s and "Workflow stopped" not in s, s[-800:])
     t.send(DOWN)
     t.send(ENTER, 1.0)  # Send comments to Developer…
     check("'Send comments…' opens an editor for the Developer's comments", t.wait("Comments for the Developer", 5))
@@ -556,7 +571,7 @@ def limit():
     for _ in range(3):
         t.send("\x1b", 1.0)
     s = t.text()
-    check("Esc on the round-limit dialog (three times) asks it again and does not stop the workflow", "Round limit reached" in s and "Workflow stopped" not in s and len(t.agent_requests()) == n, s[-800:])
+    check("Esc on the round-limit dialog (three times) leaves the dialog open and does not stop the workflow", "Round limit reached" in s and "Workflow stopped" not in s and len(t.agent_requests()) == n, s[-800:])
     t.send(ENTER, 1.0)  # Continue (one more round)
     ok = t.wait("Planning: 4 round(s) without approval", 60)
     s = t.text()
@@ -1001,7 +1016,7 @@ def commit():
     # Edit commit message… → a lower-case subject → Approve is refused with the reason
     for _ in range(3):
         t.send("\x1b", 1.0)
-    check("Esc on the message confirmation (three times) asks it again", "Confirm the commit message" in t.text() and "Workflow finished" not in t.text())
+    check("Esc on the message confirmation (three times) leaves the dialog open", "Confirm the commit message" in t.text() and "Workflow finished" not in t.text())
     t.send(DOWN)
     t.send(ENTER, 1.0)
     check("'Edit commit message…' opens the file in the editor", t.wait("Add a hello file", 5) and "submit" in t.text())
@@ -1113,7 +1128,77 @@ def commit():
     t.close()
 
 
-SCENARIOS = {"full": full, "stop": stop, "limit": limit, "abort": abort, "resume": resume, "compaction": compaction, "manual-compact": manual_compact, "usage": usage, "waiting": waiting, "commit": commit}
+def to_plan_confirmation(t):
+    """Start /dev and hand the Planner an assignment; True once the plan confirmation is open."""
+    t.type_line("/dev")
+    t.wait(BANNER, 30)
+    t.type_line("a hello file")
+    return t.wait("Confirm the plan", 60)
+
+
+def bar_state(screen_text):
+    """The bar's state as the user reads it: the stage title and the agents' row, without the figures to the right."""
+    rows = bar_rows(screen_text)
+    return rows and (rows[0].split("╮")[0], rows[1].split("│")[1] if "│" in rows[1] else rows[1])
+
+
+def quit():
+    print("━━ quit ━━")
+
+    # Ctrl+C in the select dialog; Esc leaves it open
+    t = Tui("quit-select")
+    ok = to_plan_confirmation(t)
+    check("the plan confirmation opened", ok)
+    if not ok:
+        print(t.text()[-2500:])
+        t.close()
+        return
+    before = bar_state(t.text())
+    for _ in range(3):
+        t.send("\x1b", 1.0)
+    s = t.text()
+    dialog = s[s.rfind("Confirm the plan"):]
+    check("Esc leaves the plan confirmation open and the process running", "Approve" in dialog and "Workflow stopped" not in s and not t.exited(0.5), s[-800:])
+    hint = next((line for line in dialog.split("\n") if "ctrl+c" in line), "")
+    check("its hint says Ctrl+C quits and has no Esc or cancel", "ctrl+c quit" in hint and "esc" not in hint.lower() and "cancel" not in hint.lower(), dialog)
+    t.send("\x03", 0.5)
+    check("Ctrl+C in the plan confirmation makes pi exit", t.exited(15), t.text()[-800:])
+    t.close()
+    t2 = Tui("quit-select", resume=True)
+    s = t2.text()
+    check("after a restart (--continue) the bar and the state are as before", before is not None and bar_state(s) == before, (before, bar_state(s)))
+    t2.close()
+
+    # Ctrl+C in an editor dialog; Esc returns to the select
+    t = Tui("quit-editor")
+    ok = to_plan_confirmation(t)
+    check("(editor) the plan confirmation opened", ok)
+    if not ok:
+        print(t.text()[-2500:])
+        t.close()
+        return
+    before = bar_state(t.text())
+    t.send(DOWN)
+    t.send(DOWN)
+    t.send(ENTER, 1.0)  # Send back to Planner…
+    check("(editor) the comments editor opened", t.wait("Comments for the Planner", 5))
+    t.send("\x1b", 1.0)
+    s = t.text()
+    check("(editor) Esc returns to the plan confirmation", s.rfind("Confirm the plan") > s.rfind("Comments for the Planner"), s[-800:])
+    t.send(DOWN)
+    t.send(DOWN)
+    t.send(ENTER, 1.0)
+    check("(editor) the comments editor opened again", t.wait("Comments for the Planner", 5))
+    t.send("\x03", 0.5)
+    check("(editor) Ctrl+C in the editor makes pi exit", t.exited(15), t.text()[-800:])
+    t.close()
+    t2 = Tui("quit-editor", resume=True)
+    s = t2.text()
+    check("(editor) after a restart (--continue) the bar and the state are as before", before is not None and bar_state(s) == before, (before, bar_state(s)))
+    t2.close()
+
+
+SCENARIOS = {"full": full, "stop": stop, "limit": limit, "abort": abort, "resume": resume, "compaction": compaction, "manual-compact": manual_compact, "usage": usage, "waiting": waiting, "commit": commit, "quit": quit}
 OPT_IN = {"real": real}
 
 if __name__ == "__main__":

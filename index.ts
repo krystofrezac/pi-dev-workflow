@@ -35,6 +35,7 @@ import { buildBriefing } from "./briefings.ts";
 import { agentView, collectFileOps, compactionSettings, planCompaction, summaryMessage, type ViewMessage } from "./compaction.ts";
 import { BRIEFING_TYPE, briefedBefore, END_TYPE, type EntryLike, visibleMessages } from "./context.ts";
 import { type ConversationEntry, developmentConversation, planningConversation } from "./conversation.ts";
+import { ask, editText, QUIT, type Quit } from "./dialogs.ts";
 import {
 	allocateRunDir,
 	commitMessagePath,
@@ -309,30 +310,37 @@ export default function devWorkflow(pi: ExtensionAPI): void {
 
 	// ───────────────────────────── dialogs ─────────────────────────────
 
-	/** `select` that re-asks until an option is chosen, however often it is dismissed. */
-	async function ask(ctx: ExtensionContext, title: string, options: string[]): Promise<string> {
-		for (;;) {
-			const choice = await ctx.ui.select(title, options);
-			if (choice !== undefined) return choice;
-		}
-	}
+	/** The editor dialog; Ctrl+C in it quits pi (`QUIT`), Esc gives `undefined`. */
+	const edit = (ctx: ExtensionContext, title: string, prefill: string) => editText(ctx.ui, () => ctx.shutdown(), title, prefill);
 
-	async function askPlan(ctx: ExtensionContext, s: WorkflowState, next: Extract<Next, { type: "confirm-plan" }>): Promise<PlanChoice> {
+	// Every `ask*` returns its choice, or `QUIT` at once when the user pressed Ctrl+C in a dialog. Esc in a select does
+	// nothing (the dialog stays); Esc in an editor returns to the select.
+
+	async function askPlan(
+		ctx: ExtensionContext,
+		s: WorkflowState,
+		next: Extract<Next, { type: "confirm-plan" }>,
+	): Promise<PlanChoice | Quit> {
 		const plan = planPath(s.dir);
 		const said = next.approved ? `The Plan reviewer approved the plan: ${preview(next.note)}` : preview(next.note);
 		const title = `Confirm the plan\n${plan}\n\n${said}`;
 		for (;;) {
-			switch (await ask(ctx, title, [APPROVE, EDIT_PLAN, SEND_BACK, STOP])) {
+			const choice = await ask(ctx, title, [APPROVE, EDIT_PLAN, SEND_BACK, STOP]);
+			if (choice === QUIT) return QUIT;
+			switch (choice) {
 				case APPROVE:
 					return { kind: "approve" };
 				case EDIT_PLAN: {
 					const before = readFileSync(plan, "utf8");
-					const after = await ctx.ui.editor("Edit plan", before);
+					const after = await edit(ctx, "Edit plan", before);
+					if (after === QUIT) return QUIT;
 					if (after !== undefined && after !== before) writeFileSync(plan, after);
 					continue; // ask again
 				}
 				case SEND_BACK: {
-					const comments = (await ctx.ui.editor("Comments for the Planner", ""))?.trim();
+					const typed = await edit(ctx, "Comments for the Planner", "");
+					if (typed === QUIT) return QUIT;
+					const comments = typed?.trim();
 					if (comments) return { kind: "send-back", comments };
 					continue; // nothing written → ask again
 				}
@@ -342,17 +350,25 @@ export default function devWorkflow(pi: ExtensionAPI): void {
 		}
 	}
 
-	async function askCode(ctx: ExtensionContext, s: WorkflowState, next: Extract<Next, { type: "confirm-code" }>): Promise<CodeChoice> {
+	async function askCode(
+		ctx: ExtensionContext,
+		s: WorkflowState,
+		next: Extract<Next, { type: "confirm-code" }>,
+	): Promise<CodeChoice | Quit> {
 		const title = `Code review passed\n\nThe Code reviewer approved the work: ${preview(next.note)}`;
 		const options = [FINISH, SEND_COMMENTS, ...(s.baseline?.git === true ? [COMMIT] : [])];
 		for (;;) {
-			switch (await ask(ctx, title, options)) {
+			const choice = await ask(ctx, title, options);
+			if (choice === QUIT) return QUIT;
+			switch (choice) {
 				case FINISH:
 					return { kind: "finish" };
 				case COMMIT:
 					return { kind: "commit" };
 				case SEND_COMMENTS: {
-					const comments = (await ctx.ui.editor("Comments for the Developer", ""))?.trim();
+					const typed = await edit(ctx, "Comments for the Developer", "");
+					if (typed === QUIT) return QUIT;
+					const comments = typed?.trim();
 					if (comments) return { kind: "comment", comments };
 					continue; // nothing written → ask again
 				}
@@ -360,14 +376,16 @@ export default function devWorkflow(pi: ExtensionAPI): void {
 		}
 	}
 
-	async function askCommit(ctx: ExtensionContext, s: WorkflowState): Promise<CommitChoice> {
+	async function askCommit(ctx: ExtensionContext, s: WorkflowState): Promise<CommitChoice | Quit> {
 		const path = commitMessagePath(s.dir);
 		let problem: string | undefined;
 		for (;;) {
 			const subject = readFileSync(path, "utf8").split("\n")[0]?.trim() ?? "";
 			const title = `Confirm the commit message\n${path}\n\n${problem ? `${problem}\n\n` : ""}${preview(subject)}`;
 			problem = undefined;
-			switch (await ask(ctx, title, [APPROVE_COMMIT, EDIT_COMMIT, SEND_COMMIT_COMMENTS, FINISH_WITHOUT_COMMIT])) {
+			const choice = await ask(ctx, title, [APPROVE_COMMIT, EDIT_COMMIT, SEND_COMMIT_COMMENTS, FINISH_WITHOUT_COMMIT]);
+			if (choice === QUIT) return QUIT;
+			switch (choice) {
 				case APPROVE_COMMIT:
 					// The user may have edited the file: only a valid one is committed.
 					problem = commitMessageProblem(s.dir);
@@ -375,12 +393,15 @@ export default function devWorkflow(pi: ExtensionAPI): void {
 					continue; // the reason is shown, ask again
 				case EDIT_COMMIT: {
 					const before = readFileSync(path, "utf8");
-					const after = await ctx.ui.editor("Edit commit message", before);
+					const after = await edit(ctx, "Edit commit message", before);
+					if (after === QUIT) return QUIT;
 					if (after !== undefined && after !== before) writeFileSync(path, after);
 					continue; // ask again
 				}
 				case SEND_COMMIT_COMMENTS: {
-					const comments = (await ctx.ui.editor("Comments for the Committer", ""))?.trim();
+					const typed = await edit(ctx, "Comments for the Committer", "");
+					if (typed === QUIT) return QUIT;
+					const comments = typed?.trim();
 					if (comments) return { kind: "send-back", comments };
 					continue; // nothing written → ask again
 				}
@@ -390,10 +411,12 @@ export default function devWorkflow(pi: ExtensionAPI): void {
 		}
 	}
 
-	async function askLimit(ctx: ExtensionContext, s: WorkflowState, stage: Stage, feedback: string): Promise<LimitChoice> {
+	async function askLimit(ctx: ExtensionContext, s: WorkflowState, stage: Stage, feedback: string): Promise<LimitChoice | Quit> {
 		const title = `Round limit reached — ${STAGE_LABEL[stage]}: ${s.round[stage]} round(s) without approval\nLast feedback: ${preview(feedback)}`;
 		for (;;) {
-			switch (await ask(ctx, title, [CONTINUE, ACCEPT, STOP])) {
+			const choice = await ask(ctx, title, [CONTINUE, ACCEPT, STOP]);
+			if (choice === QUIT) return QUIT;
+			switch (choice) {
 				case CONTINUE:
 					return "continue";
 				case ACCEPT:
@@ -404,8 +427,11 @@ export default function devWorkflow(pi: ExtensionAPI): void {
 		}
 	}
 
-	/** Follow a step through the dialogs until it is something the boundary can apply: `activate` or `end`. */
-	async function settle(ctx: ExtensionContext, start: Step): Promise<Step> {
+	/**
+	 * Follow a step through the dialogs until it is something the boundary can apply: `activate` or `end`. `QUIT` when
+	 * the user pressed Ctrl+C in a dialog: no decision is applied.
+	 */
+	async function settle(ctx: ExtensionContext, start: Step): Promise<Step | Quit> {
 		let step = start;
 		for (;;) {
 			const { next } = step;
@@ -413,18 +439,30 @@ export default function devWorkflow(pi: ExtensionAPI): void {
 				case "activate":
 				case "end":
 					return step;
-				case "confirm-plan":
-					step = resolvePlanConfirmation(step.state, await askPlan(ctx, step.state, next));
+				case "confirm-plan": {
+					const choice = await askPlan(ctx, step.state, next);
+					if (choice === QUIT) return QUIT;
+					step = resolvePlanConfirmation(step.state, choice);
 					break;
-				case "confirm-code":
-					step = resolveCodeConfirmation(step.state, await askCode(ctx, step.state, next), next.note);
+				}
+				case "confirm-code": {
+					const choice = await askCode(ctx, step.state, next);
+					if (choice === QUIT) return QUIT;
+					step = resolveCodeConfirmation(step.state, choice, next.note);
 					break;
-				case "confirm-commit":
-					step = resolveCommitConfirmation(step.state, await askCommit(ctx, step.state));
+				}
+				case "confirm-commit": {
+					const choice = await askCommit(ctx, step.state);
+					if (choice === QUIT) return QUIT;
+					step = resolveCommitConfirmation(step.state, choice);
 					break;
-				case "round-limit":
-					step = resolveRoundLimit(step.state, next.stage, next.feedback, await askLimit(ctx, step.state, next.stage, next.feedback));
+				}
+				case "round-limit": {
+					const choice = await askLimit(ctx, step.state, next.stage, next.feedback);
+					if (choice === QUIT) return QUIT;
+					step = resolveRoundLimit(step.state, next.stage, next.feedback, choice);
 					break;
+				}
 			}
 		}
 	}
@@ -531,6 +569,8 @@ export default function devWorkflow(pi: ExtensionAPI): void {
 		}
 
 		const step = await settle(ctx, transition(current, handOff));
+		// Ctrl+C in a dialog: pi is shutting down; the state stays as it was last saved.
+		if (step === QUIT) return;
 		if (state !== current) return; // stopped (or replaced) while a dialog was open
 
 		const next = step.next;

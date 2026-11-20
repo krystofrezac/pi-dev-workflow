@@ -108,7 +108,8 @@ confirmation; Development: finish) · *Stop workflow*.
 **Finish / stop** — append the closing note (`dev-end`, §6), restore the previous active tool set, clear the
 widget, notify. Files already written stay. At a boundary the note is appended **without** `continue`; the run ends because
 the last tool batch terminated (§5). A turn that did not complete (Esc, error) drops any recorded hand-off: the agent stays.
-A dialog that is dismissed (Esc) is asked again.
+Esc in a select dialog is ignored (the dialog stays, no decision is skipped); Esc in an editor returns to the select it was opened
+from; Ctrl+C in either quits pi, applies no decision and leaves the saved state as it was.
 
 ## 5. Tools
 
